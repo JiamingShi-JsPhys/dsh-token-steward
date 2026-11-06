@@ -1,0 +1,79 @@
+{
+  "name": "dsh-umbra-budget",
+  "version": "1.0.0",
+  "description": "Model matrix orchestrator for DeepSeek Harness: pool any OpenAI-compatible endpoint, route by task profile across frugal/efficiency/max-power modes, dynamic failover, local exact-match cache, usage ledger and a live console.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "model_pool.example.yaml",
+    "README.md",
+    "README.zh.md",
+    "docs",
+    "LICENSE",
+    "CHANGELOG.md",
+    "market"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs && node --test \"tests/**/*.spec.ts\"",
+    "test:only": "node --test \"tests/**/*.spec.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "llm",
+    "router"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "esbuild": "^0.24.0",
+    "typescript": "5.7.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.1-rc.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "author": "dsh-umbra-budget contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://example.com/your-org/DSH-Umbra-Budget.git"
+  },
+  "bugs": {
+    "url": "https://example.com/your-org/DSH-Umbra-Budget/issues"
+  }
+}

@@ -1,0 +1,373 @@
+/**
+ * dsh-umbra-budget · Host 半区。
+ *
+ * 一次 apply 只做三件事，且都可被 ctx.effect 干净回收：
+ *  1. 把 model_pool.yaml 读成矩阵，建路由引擎，起本地网关；
+ *  2. 把面板要的四条 HTTP 路由挂到宿主 webServer 上；
+ *  3. 把网关接线参数写进 $DSH_HOME/umbra-budget/gateway.json，
+ *     并盯着 model_pool.yaml 的改动做热重载。
+ *
+ * 设计上刻意如此：所有判断都在 core/ 的纯函数里，所有 IO 都在 host/ 的
+ * 薄壳里，本文件只负责把它们串起来并在出错时降级（而不是让插件加载失败）。
+ *
+ * 一条纪律：**本插件永远不该让宿主起不来**。配置坏了、端口占不到、yaml 解不了，
+ * 都只是「本插件不可用」，宿主该照常工作。
+ */
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+
+import { createPoolFileLoader } from './host/pool-file.ts'
+import { createPoolWatcher } from './host/pool-watch.ts'
+import { createRouteLedgerStore } from './host/ledger-store.ts'
+import { createRouter, type UmbraRouter } from './core/router.ts'
+import { resolveCredential } from './host/credentials.ts'
+import { startGateway, type Gateway } from './host/gateway.ts'
+import { makePanelRoutes } from './host/routes.ts'
+import { readUsageProjection } from './host/usage-bridge.ts'
+import { writeFileAtomic } from './host/atomic-file.ts'
+import type { GatewayState, PoolConfig, RoutingMode } from './core/types.ts'
+
+/** 插件名（cordis 行 id 与日志前缀）。 */
+export const name = 'umbra-budget'
+
+/** 必需服务：HTTP 载体。llm 不 inject——没有模型的部署也该能挂载插件。 */
+export const inject = ['webServer']
+
+/** 配置形状（schemastery 由宿主注入，这里只声明读到的字段）。 */
+export interface UmbraConfigFields {
+  enabled?: unknown
+  poolPath?: unknown
+  retainDays?: unknown
+  usagePollMs?: unknown
+  gatewayPort?: unknown
+}
+
+/** 解析后的配置。 */
+export interface ResolvedConfig {
+  enabled: boolean
+  poolPath: string
+  retainDays: number
+  usagePollMs: number
+  gatewayPort: number
+}
+
+/** 默认保留天数。 */
+const DEFAULT_RETAIN_DAYS = 180
+
+/** 默认计量轮询间隔。 */
+const DEFAULT_USAGE_POLL_MS = 15_000
+
+/** 默认网关端口：0 表示由系统分配。 */
+const DEFAULT_GATEWAY_PORT = 0
+
+/** 从配置字段里读字符串（可能是 volatile 引用）。 */
+function readString(field: unknown): string | undefined {
+  const value = readField(field)
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** 从配置字段里读数字。 */
+function readNumber(field: unknown, fallback: number): number {
+  const value = readField(field)
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** 从配置字段里读布尔。 */
+function readBoolean(field: unknown, fallback: boolean): boolean {
+  const value = readField(field)
+  return typeof value === 'boolean' ? value : fallback
+}
+
+/** 跟随 volatile 引用取当前值。 */
+function readField(field: unknown): unknown {
+  if (field !== null && typeof field === 'object' && typeof (field as { get?: unknown }).get === 'function') {
+    return (field as { get: () => unknown }).get()
+  }
+  return field
+}
+
+/** $DSH_HOME 的解析：与宿主其它插件一致，缺省 ~/.dsh。 */
+export function dshHome(): string {
+  const fromEnv = process.env.DSH_HOME
+  if (typeof fromEnv === 'string' && fromEnv !== '') return fromEnv
+  return join(homedir(), '.dsh')
+}
+
+/** 本插件的数据目录。 */
+export function dataDirectory(): string {
+  return join(dshHome(), 'umbra-budget')
+}
+
+/** 解析配置。 */
+export function resolveConfig(config?: UmbraConfigFields): ResolvedConfig {
+  return {
+    enabled: readBoolean(config?.enabled, true),
+    poolPath: readString(config?.poolPath) ?? join(dataDirectory(), 'model_pool.yaml'),
+    retainDays: Math.max(1, Math.round(readNumber(config?.retainDays, DEFAULT_RETAIN_DAYS))),
+    usagePollMs: Math.max(2_000, Math.round(readNumber(config?.usagePollMs, DEFAULT_USAGE_POLL_MS))),
+    gatewayPort: Math.max(0, Math.round(readNumber(config?.gatewayPort, DEFAULT_GATEWAY_PORT))),
+  }
+}
+
+/** YAML 解码器的惰性加载：宿主自带 yaml，取不到时给出可读失败。 */
+async function loadYamlDecoder(): Promise<(text: string) => unknown> {
+  const candidates = ['yaml', 'js-yaml']
+  for (const specifier of candidates) {
+    try {
+      const module = await import(specifier) as { parse?: (text: string) => unknown, default?: { parse?: (text: string) => unknown } }
+      const parse = module.parse ?? module.default?.parse
+      if (typeof parse === 'function') return (text: string) => parse(text)
+    } catch {
+      // 下一个候选。
+    }
+  }
+  // 都取不到：配置无法解码，但插件仍挂载并如实报告「YAML 解码器不可用」。
+  return () => { throw new Error('no YAML decoder available (expected the host to provide "yaml" or "js-yaml")') }
+}
+
+/**
+ * 挂载插件。
+ * @param ctx - 宿主上下文。
+ * @param config - 行配置。
+ */
+export async function apply(ctx: {
+  logger?: (name: string) => { info(...args: unknown[]): void, warn(...args: unknown[]): void, error(...args: unknown[]): void }
+  webServer?: { register(route: unknown): () => void }
+  effect?: (fn: () => () => void, label?: string) => void
+}, config?: UmbraConfigFields): Promise<void> {
+  const settings = resolveConfig(config)
+  const log = ctx.logger?.('umbra-budget') ?? { info() {}, warn() {}, error() {} }
+  if (!settings.enabled) {
+    log.info('disabled by configuration; nothing mounted')
+    return
+  }
+
+  const directory = dataDirectory()
+  await mkdir(directory, { recursive: true }).catch(() => {})
+
+  // ── 配置 ────────────────────────────────────────────────
+  const decode = await loadYamlDecoder()
+  const loader = createPoolFileLoader(settings.poolPath, decode)
+  await loader.load(Date.now())
+  let configValue: PoolConfig | undefined = loader.current()
+  let router: UmbraRouter | undefined = configValue === undefined ? undefined : createRouter(configValue)
+
+  /** 配置变了就重建路由引擎；失败时保留旧引擎。 */
+  async function reload(now: number): Promise<{ ok: boolean, status: string, error?: string }> {
+    const result = await loader.load(now)
+    if (result.ok && result.config !== undefined) {
+      configValue = result.config
+      router = createRouter(configValue, undefined, router?.getMode())
+      for (const warning of result.warnings) log.warn('config: %s', warning)
+    }
+    const state = loader.state()
+    return state.error === undefined
+      ? { ok: result.ok, status: state.status }
+      : { ok: result.ok, status: state.status, error: state.error }
+  }
+
+  // ── 凭据（只在内存）──────────────────────────────────────
+  let secrets = new Map<string, string>()
+  async function refreshSecrets(): Promise<void> {
+    const next = new Map<string, string>()
+    if (configValue === undefined) {
+      secrets = next
+      return
+    }
+    for (const provider of configValue.providers) {
+      const resolved = await resolveCredential(provider.api_key)
+      if (resolved.ok) next.set(provider.provider_name, resolved.secret)
+      else log.warn('provider %s: %s', provider.provider_name, resolved.reason)
+    }
+    secrets = next
+  }
+  await refreshSecrets()
+
+  // ── 台账 ────────────────────────────────────────────────
+  const ledger = createRouteLedgerStore(directory, undefined, settings.retainDays)
+  await ledger.load()
+
+  // ── 计量（只在面板轮询时读，避免常驻 IO）──────────────────
+  let usageCache = { at: 0, available: false, facts: {} as Record<string, unknown>, dateKey: '' }
+  async function usageNow(now: number): Promise<typeof usageCache> {
+    if (now - usageCache.at < settings.usagePollMs) return usageCache
+    const projection = await readUsageProjection(dshHome(), now)
+    usageCache = {
+      at: now,
+      available: projection.available,
+      facts: projection.facts as unknown as Record<string, unknown>,
+      dateKey: projection.dateKey,
+    }
+    return usageCache
+  }
+
+  // ── 网关 ────────────────────────────────────────────────
+  let gateway: Gateway | undefined
+  const statePath = join(directory, 'gateway.json')
+  if (router !== undefined) {
+    try {
+      gateway = await startGateway({
+        config: () => configValue,
+        router: () => router as UmbraRouter,
+        secrets: () => secrets,
+        ledger,
+        log: (level, message) => { log[level]('%s', message) },
+        port: settings.gatewayPort,
+      })
+      const state: GatewayState = {
+        appliedAt: Date.now(),
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: gateway.port(),
+        baseUrl: gateway.baseUrl(),
+        modelIds: gatewayModelIds(configValue),
+        token: gateway.token(),
+      }
+      await writeFileAtomic(statePath, JSON.stringify(state, null, 2) + '\n')
+      log.info('gateway ready at %s (%d models)', state.baseUrl, state.modelIds.length)
+    } catch (error) {
+      // 端口占不到之类的失败：插件仍挂载，面板会显示「网关未启动」。
+      log.error('gateway failed to start: %s', messageOf(error))
+      gateway = undefined
+    }
+  } else {
+    log.warn('no usable model pool at %s; gateway not started', settings.poolPath)
+  }
+
+  // ── 面板路由 ────────────────────────────────────────────
+  const disposers: Array<() => void> = []
+  if (ctx.webServer !== undefined) {
+    const routes = makePanelRoutes({
+      snapshot: async () => {
+        const now = Date.now()
+        // 先按 usagePollMs 节流地刷一次计量，再组快照：面板拿到的永远是最新一版，
+        // 而不是「上一次轮询的那一版」。绝不能只在 apply 时预热一次——那样
+        // dsh-usage 在启动之后写入的数据将永远不可见。
+        await usageNow(now)
+        return router === undefined
+          ? emptySnapshot(now, loader.state())
+          : router.snapshot(now, {
+            usage: usageCache.facts as never,
+            usageAvailable: usageCache.available,
+            pool: loader.state(),
+          })
+      },
+      setMode: (mode: RoutingMode) => {
+        if (router === undefined) return false
+        router.setMode(mode)
+        // 模式选择要跨重启保留：写回配置文件。
+        void persistMode(settings.poolPath, mode).catch((error: unknown) => {
+          log.warn('cannot persist mode: %s', messageOf(error))
+        })
+        return true
+      },
+      reload: () => reload(Date.now()),
+      gateway: () => gateway === undefined
+        ? undefined
+        : {
+          baseUrl: gateway.baseUrl(),
+          token: gateway.token(),
+          modelIds: gatewayModelIds(configValue),
+          port: gateway.port(),
+        },
+    })
+    for (const route of routes) {
+      try {
+        disposers.push(ctx.webServer.register(route))
+      } catch (error) {
+        log.warn('cannot register %s: %s', route.path, messageOf(error))
+      }
+    }
+    // 面板打开时才会请求；这里先预热一次，让首帧就有数。
+    void usageNow(Date.now())
+  } else {
+    log.warn('webServer is not available; the panel routes are not mounted')
+  }
+
+  // ── 热重载 ──────────────────────────────────────────────
+  const watcher = createPoolWatcher(
+    settings.poolPath,
+    () => {
+      void reload(Date.now()).then(async (result) => {
+        if (!result.ok) {
+          log.warn('config rejected, keeping the previous matrix: %s', result.error ?? '')
+          return
+        }
+        await refreshSecrets()
+        log.info('config reloaded (%d providers)', configValue?.providers.length ?? 0)
+      })
+    },
+    (message) => { log.warn('%s', message) },
+  )
+  watcher.start()
+
+  // ── 回收 ────────────────────────────────────────────────
+  const teardown = (): void => {
+    watcher.stop()
+    for (const dispose of disposers) {
+      try {
+        dispose()
+      } catch {
+        // 路由 fiber 已随宿主退场。
+      }
+    }
+    if (gateway !== undefined) {
+      const closing = gateway
+      gateway = undefined
+      void closing.close().catch(() => {})
+    }
+    void ledger.flush().catch(() => {})
+  }
+
+  if (typeof ctx.effect === 'function') ctx.effect(() => teardown, 'umbra-budget: runtime')
+  else log.warn('ctx.effect is unavailable; resources rely on process exit')
+}
+
+/** 网关公布的模型 id（与 host/gateway 的规则同源）。 */
+function gatewayModelIds(config: PoolConfig | undefined): string[] {
+  const ids = ['umbra:auto', 'umbra:frugal', 'umbra:efficiency', 'umbra:max_power']
+  if (config === undefined) return ids
+  for (const provider of config.providers) {
+    for (const model of provider.models) {
+      if (model.availability === 'offline') continue
+      ids.push(model.id)
+    }
+  }
+  return ids
+}
+
+/** 没有任何可用配置时的空快照，保证面板永远拿到完整形状。 */
+function emptySnapshot(now: number, pool: { status: string, source: string, error?: string }): unknown {
+  return {
+    revision: now,
+    mode: 'frugal',
+    updatedAt: now,
+    usageAvailable: false,
+    models: [],
+    agents: [],
+    recent: [],
+    totals: { todayTokens: 0, todayCost: null, cacheHitRate: null, degradedRequests: 0, unpricedModels: 0 },
+    pool,
+  }
+}
+
+/** 把模式写回 model_pool.yaml 的 routing.mode 一行（最小侵入的原地改写）。 */
+async function persistMode(path: string, mode: RoutingMode): Promise<void> {
+  const { readFileIfExists, writeFileAtomic } = await import('./host/atomic-file.ts')
+  const text = await readFileIfExists(path)
+  if (text === undefined) return
+  const pattern = /(^routing:[\s\S]*?^\s+mode:\s*)([a-z_]+)/m
+  const next = pattern.test(text)
+    ? text.replace(pattern, '$1' + mode)
+    : text + (text.endsWith('\n') ? '' : '\n') + 'routing:\n  mode: ' + mode + '\n'
+  if (next === text) return
+  await writeFileAtomic(path, next)
+}
+
+/** 从 unknown 里取可读消息。 */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export default { name, inject, apply }

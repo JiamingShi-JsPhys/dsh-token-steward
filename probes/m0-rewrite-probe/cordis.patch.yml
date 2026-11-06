@@ -1,0 +1,13 @@
+# umbra-rewrite-probe bundle patch — install into a scratch profile, run once, read the report, uninstall.
+- insert:
+    - id: umbra-rewrite-probe
+      name: dsh-umbra-rewrite-probe
+      config:
+        # The probe issues 4 tiny self-calls (≤8 output tokens) through this route.
+        # Point it at any provider/model that is configured and cheap in this profile.
+        provider: deepseek
+        model: deepseek-chat
+        marker: __UMBRA_PROBE__
+        probeProvider: __umbra_nonexistent_provider__
+        timeoutMs: 30000
+        autoRun: true

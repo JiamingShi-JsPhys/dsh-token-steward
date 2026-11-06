@@ -1,0 +1,103 @@
+# ============================================================================
+# dsh-umbra-budget · model_pool.yaml  (示例 / 完整字段演示)
+# 落位：$DSH_HOME/umbra-budget/model_pool.yaml
+# 规则：任意一条非法 → 整份配置被拒绝（不半应用），沿用上一次有效矩阵。
+# ============================================================================
+version: 1
+
+defaults:
+  timeout_ms: 60000        # 单次尝试的墙钟预算
+  max_attempts: 3          # 一次请求内最多尝试几个模型（含首次）
+  cooldown_ms: 30000       # 429/限流后的冷却窗口
+  failure_threshold: 3     # 连续失败几次打开熔断
+  half_open_after_ms: 60000
+
+routing:
+  mode: frugal             # frugal | efficiency | max_power（UI 可实时覆盖）
+  cache:
+    exact_match: false     # 本地精确响应缓存：同 prompt 在 TTL 内回放上次响应（不出站不计费）
+    max_entries: 500
+    ttl_ms: 3600000
+  agent_overrides:         # 子代理级钉子：命中 agent_id 时优先按这里走
+    visual_agent:          # 视觉代理：只派能看图的模型
+      require_modalities: [image]
+    analysis_agent:
+      mode: max_power
+
+providers:
+  - provider_name: deepseek-official
+    endpoint: https://api.deepseek.com/v1
+    api: openai-completions
+    api_key: env:DEEPSEEK_API_KEY     # env:NAME | literal:xxx | ${NAME}
+    headers: {}
+    models:
+      - id: deepseek-flash
+        display_name: DeepSeek V4.1 Flash
+        capabilities: [fast, coding, tool-use, long-context]
+        cost_level: low
+        context_window: 1000000
+        max_output_tokens: 32768
+        availability: direct
+        input_modalities: [text]
+        max_concurrency: 8
+        rpm: 600
+        quality_rank: 62
+        pricing: { currency: CNY, input_per_mtok: 0.5, output_per_mtok: 2.0, cache_read_per_mtok: 0.1 }
+
+  - provider_name: agnes
+    endpoint: https://api.agnes-ai.cn/v1
+    api: openai-completions
+    api_key: env:AGNES_API_KEY
+    models:
+      - id: agnes-3.0-flash
+        display_name: Agnes 3.0 Flash
+        capabilities: [fast, coding, vision]
+        cost_level: free
+        context_window: 128000
+        availability: direct
+        input_modalities: [text, image]
+        max_concurrency: 4
+        quality_rank: 48
+      - id: agnes-2.5-flash
+        display_name: Agnes 2.5 Flash
+        capabilities: [fast]
+        cost_level: free
+        context_window: 32000
+        availability: direct
+        max_concurrency: 4
+        quality_rank: 35
+
+  # 通过 cc switch / 本地代理接入的中文镜像：availability: proxy
+  - provider_name: mirror-cn
+    endpoint: https://mirror.example.cn/v1
+    api: openai-completions
+    api_key: env:MIRROR_API_KEY
+    headers:
+      x-opencode-session: "{{opencodeSession}}"   # 可选：沿用 provider-proxy 的占位符约定
+    models:
+      - id: glm-5.3-flash
+        display_name: GLM 5.3 Flash (镜像)
+        capabilities: [fast, coding, reasoning, tool-use]
+        cost_level: low
+        context_window: 200000
+        availability: proxy
+        proxy_url: http://127.0.0.1:7890
+        max_concurrency: 2
+        rpm: 60
+        quality_rank: 55
+
+  - provider_name: frontier
+    endpoint: https://api.frontier.example/v1
+    api: openai-completions
+    api_key: env:FRONTIER_API_KEY
+    models:
+      - id: frontier-max
+        display_name: Frontier Max
+        capabilities: [coding, reasoning, vision, tool-use, long-context]
+        cost_level: high
+        context_window: 2000000
+        availability: direct
+        input_modalities: [text, image]
+        max_concurrency: 4
+        quality_rank: 100
+        pricing: { currency: USD, input_per_mtok: 15, output_per_mtok: 75 }

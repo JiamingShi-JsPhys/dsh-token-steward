@@ -1,0 +1,28 @@
+{
+  "name": "dsh-umbra-rewrite-probe",
+  "version": "0.1.0",
+  "description": "M0 capability probe: does a llm/stream waterfall rewrite actually reach the wire? Writes a verdict report for the dsh-umbra-budget model matrix.",
+  "type": "module",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
