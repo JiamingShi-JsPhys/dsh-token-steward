@@ -13,6 +13,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { countAuthCookies } from '../core/auth-cookies.ts'
 import type { ImportScope, ModelPrice, RoutingMode } from '../core/types.ts'
 
 /** 面板路由前缀。 */
@@ -75,8 +76,10 @@ export interface VendorView {
 
 /** 面板路由需要的数据面。 */
 export interface PanelApi {
-  /** 取一次快照；计量需要读盘时可以是异步的。 */
-  snapshot(): unknown | Promise<unknown>
+  /** 取一次快照；计量需要读盘时可以是异步的。
+   *  `seen` 是本次请求携带的网页会话信息（目前只有 dsh-auth Cookie 数量）：
+   *  宿主自己收得到 Cookie 头，因此体检不需要碰被 Chromium 独占的 Cookies 文件。 */
+  snapshot(seen?: { authCookies: number }): unknown | Promise<unknown>
   /** 切换模式；返回是否被接受。 */
   setMode(mode: RoutingMode): boolean
   /** 重新读配置；返回结果说明。 */
@@ -125,7 +128,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
           writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
           return
         }
-        writeJson(res, 200, { ok: true, snapshot: await api.snapshot() })
+        const cookieHeader = req.headers.cookie
+        const seen = cookieHeader === undefined ? undefined : { authCookies: countAuthCookies(cookieHeader) }
+        writeJson(res, 200, { ok: true, snapshot: await api.snapshot(seen) })
       },
     },
     {

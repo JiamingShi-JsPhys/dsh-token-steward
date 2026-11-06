@@ -574,7 +574,7 @@ export async function apply(ctx: {
     // 内置头像随包发布（assets/avatars），由同源路由提供，浏览器无需跨域。
     const avatarDirectory = fileURLToPath(new URL('../assets/avatars', import.meta.url))
     const routes = makePanelRoutes({
-      snapshot: async () => {
+      snapshot: async (seen) => {
         const now = Date.now()
         // 先按 usagePollMs 节流地刷一次计量，再组快照：面板拿到的永远是最新一版，
         // 而不是「上一次轮询的那一版」。绝不能只在 apply 时预热一次——那样
@@ -586,7 +586,9 @@ export async function apply(ctx: {
         const cache = gateway === undefined ? undefined : await gateway.cacheStats(now)
         if (router === undefined) {
           panelRevision += 1
-          return emptySnapshot(now, poolState, panelRevision)
+          const empty = emptySnapshot(now, poolState, panelRevision) as Record<string, unknown>
+          if (seen !== undefined) empty.authCookies = seen.authCookies
+          return empty
         }
         const snapshot = router.snapshot(now, {
           usage: usageCache.facts as never,
@@ -601,6 +603,7 @@ export async function apply(ctx: {
             }),
         })
         panelRevision = Math.max(panelRevision, snapshot.revision)
+        if (seen !== undefined) snapshot.authCookies = seen.authCookies
         return snapshot
       },
       setMode: (mode: RoutingMode) => {

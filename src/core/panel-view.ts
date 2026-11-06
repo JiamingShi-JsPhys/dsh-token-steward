@@ -13,6 +13,7 @@ import type {
   RouteEventView,
   RoutingMode,
 } from './types.ts'
+import { AUTH_COOKIE_DANGER, AUTH_COOKIE_WARN } from './auth-cookies.ts'
 import {
   MODE_HINT,
   MODE_LABEL,
@@ -253,6 +254,20 @@ export function bannerOf(snapshot: MatrixSnapshot): Banner | undefined {
   }
   if (snapshot.pool.status === 'loading') {
     return { level: 'warn', text: '正在读取模型矩阵…' }
+  }
+  // 会话 Cookie 堆积是「下一次启动直接打不开」的那种故障，所以排在计量问题前面。
+  const authCookies = snapshot.authCookies ?? 0
+  if (authCookies >= AUTH_COOKIE_DANGER) {
+    return {
+      level: 'error',
+      text: `网页会话 Cookie 已有 ${String(authCookies)} 个，DSH 下次启动会因请求头过大失败：关闭 DSH 后在插件目录运行 npm run repair:cookies，再重新打开`,
+    }
+  }
+  if (authCookies >= AUTH_COOKIE_WARN) {
+    return {
+      level: 'warn',
+      text: `网页会话 Cookie 已有 ${String(authCookies)} 个（宿主每次启动新增一枚），建议关闭 DSH 后运行 npm run repair:cookies 清理`,
+    }
   }
   if (!snapshot.usageAvailable) {
     return { level: 'warn', text: '计量不可用：未检测到 dsh-usage 台账，token 与成本显示为破折号' }

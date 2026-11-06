@@ -1,6 +1,6 @@
 {
   "name": "dsh-token-steward",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Model matrix orchestrator for DeepSeek Harness: pool any OpenAI-compatible endpoint, route by task profile across frugal/efficiency/max-power modes, dynamic failover, local exact-match cache, usage ledger and a live console.",
   "type": "module",
   "main": "lib/index.js",
@@ -13,6 +13,7 @@
   "files": [
     "lib",
     "src",
+    "scripts/repair-dsh-cookies.mjs",
     "cordis.patch.yml",
     "assets",
     "model_pool.example.yaml",
@@ -40,7 +41,8 @@
     "build": "node scripts/build.mjs",
     "test": "node scripts/build.mjs && node --test \"tests/**/*.spec.ts\"",
     "test:only": "node --test \"tests/**/*.spec.ts\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "repair:cookies": "node scripts/repair-dsh-cookies.mjs"
   },
   "keywords": [
     "deepseek-harness",

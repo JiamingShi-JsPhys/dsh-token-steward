@@ -64,6 +64,7 @@ function snapshot(overrides: Partial<MatrixSnapshot> = {}): MatrixSnapshot {
     },
     savings: overrides.savings ?? { tokens: 0, cost: null, cacheHits: 0, cacheBackend: 'off' },
     pool: overrides.pool ?? { status: 'ok', source: 'model_pool.yaml' },
+    ...(overrides.authCookies === undefined ? {} : { authCookies: overrides.authCookies }),
   }
 }
 
@@ -256,6 +257,22 @@ test('bannerOf 在计量不可用时挂黄条', () => {
   const banner = bannerOf(snapshot({ usageAvailable: false }))
   assert.equal(banner?.level, 'warn')
   assert.ok((banner?.text ?? '').includes('dsh-usage'))
+})
+
+test('会话 Cookie 到提醒线挂黄条，并给出清理命令', () => {
+  const banner = bannerOf(snapshot({ authCookies: 40 }))
+  assert.equal(banner?.level, 'warn')
+  assert.ok((banner?.text ?? '').includes('repair:cookies'))
+})
+
+test('会话 Cookie 到危险线挂红条，并说清下次启动会失败', () => {
+  const banner = bannerOf(snapshot({ authCookies: 55 }))
+  assert.equal(banner?.level, 'error')
+  assert.ok((banner?.text ?? '').includes('下次启动'))
+})
+
+test('会话 Cookie 数量正常时不出横幅', () => {
+  assert.equal(bannerOf(snapshot({ authCookies: 3 })), undefined)
 })
 
 test('bannerOf 在全部模型下线时挂红条', () => {

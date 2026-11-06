@@ -172,6 +172,34 @@ test('snapshot 返回 200 与快照', async () => {
   })
 })
 
+test('snapshot 把请求里的会话 Cookie 数量交给宿主（体检用）', async () => {
+  let seen: { authCookies: number } | undefined
+  await withRoutes(api({
+    snapshot: (context) => {
+      seen = context
+      return { revision: 1 }
+    },
+  }), async (base) => {
+    const cookie = ['theme=dark', 'dsh-auth-aaa=v1', 'dsh-auth-bbb=v1', 'dsh-auth-ccc=v1'].join('; ')
+    const response = await fetch(base + API_PREFIX + '/snapshot', { headers: { cookie } })
+    assert.equal(response.status, 200)
+  })
+  assert.deepEqual(seen, { authCookies: 3 }, '只数 dsh-auth-*，别的 Cookie 不算')
+})
+
+test('请求里没有 Cookie 头时不传体检信息', async () => {
+  let seen: { authCookies: number } | null | undefined = null
+  await withRoutes(api({
+    snapshot: (context) => {
+      seen = context
+      return { revision: 1 }
+    },
+  }), async (base) => {
+    await fetch(base + API_PREFIX + '/snapshot')
+  })
+  assert.equal(seen, undefined)
+})
+
 test('mode 四个合法值都认，白嫖（free）不是例外', async () => {
   await withRoutes(api(), async (base) => {
     const ok = await fetch(base + API_PREFIX + '/mode', {

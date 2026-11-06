@@ -583,6 +583,8 @@ export interface MatrixSnapshot {
   savings: SavingsView
   /** 台账保留天数；宿主未报时为 undefined（面板显示默认值）。 */
   retentionDays?: number
+  /** 本次请求携带的网页会话 Cookie（dsh-auth-*）数量；宿主未统计时为 undefined。 */
+  authCookies?: number
   pool: { status: 'ok' | 'rejected' | 'loading'; source: string; error?: string }
 }
 

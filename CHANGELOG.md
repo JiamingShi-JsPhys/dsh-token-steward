@@ -1,6 +1,37 @@
 # Changelog
 
 
+## 1.1.2 — 2026-11-07
+
+### 修：DSH 打不开——`desktop welcome: Web authentication failed`
+
+真机故障：桌面版停在「应用无法启动或已意外停止」，崩溃日志只有一行
+`Error: desktop welcome: Web authentication failed`。排查结论是**与插件、密钥、
+账号都无关**的 DSH 自身缺陷：
+
+- 宿主每次启动都下发一枚**新名字**的 `dsh-auth-<随机>` Cookie（HttpOnly、`Path=/`、
+  30 天），却从不回收上一次的。本机实测积了 **71 枚**；
+- 浏览器每发一次请求就把它们全带上，Cookie 头越过 Node 默认的 16 KB 请求头上限；
+- 宿主对所有带凭证的请求回 **431 Request Header Fields Too Large**，桌面端
+  `connectDesktopWelcome` 拿到的不是 2xx，就抛上面那句「认证失败」。
+- 证据链：同一个宿主单独起、用 `fetch` 直连是 `303 → Set-Cookie` + `200`；
+  从应用主进程用 `net.fetch(url, {credentials:'include'})` 请求是 **431**，
+  `credentials:'omit'` 是 401——差别只在那一大串 Cookie。
+
+### 防护：面板体检 + 离线清理
+
+- `snapshot` 会数本次请求携带的 `dsh-auth-*` 数量（宿主自己收得到 Cookie 头，
+  不需要碰被 Chromium 独占的 Cookies 文件），面板据此挂横幅：
+  **≥ 40 黄条提醒、≥ 55 红条警告**「下次启动会失败」。
+- 新增 `src/core/auth-cookies.ts`（纯判定）与 `src/host/auth-cookies.ts`（离线清理）。
+- 新增命令 **`npm run repair:cookies`**：**完全退出 DSH** 后运行，先备份 Cookies 库，
+  再删掉本机 `127.0.0.1` 的 `dsh-auth-*`（别的源、别的 Cookie 一律不动）；
+  DSH 还在运行时会明确提示「打不开 Cookies 库，请先退出」，不会写出半个库。
+- 启动器 `shots/relaunch.ps1` 在拉起 DSH 前顺手清一次，失败不阻塞启动。
+- README 的踩坑清单补上这一条（三个坑 → 四个坑）。
+- 505 条断言全绿（新增 Cookie 计数、清理边界、横幅阈值、面板透传用例）。
+
+
 ## 1.1.1 — 2026-11-07
 
 ### 修：换过令牌后「API 密钥无效 AUTH」
