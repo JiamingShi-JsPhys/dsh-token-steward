@@ -9,7 +9,7 @@ import type { RoutingMode } from '../../core/types.ts'
 import { modeOptions } from '../../core/panel-view.ts'
 import type { MatrixSnapshot } from '../../core/types.ts'
 import { SegmentGroup } from './SegmentGroup.tsx'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 模式条的 props。 */
 export interface ModeSwitchProps {

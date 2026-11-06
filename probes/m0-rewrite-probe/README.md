@@ -1,4 +1,4 @@
-# dsh-umbra-rewrite-probe — M0 改写语义探针
+# dsh-steward-rewrite-probe — M0 改写语义探针
 
 回答一个承重问题：**在 `llm/stream` 瀑布里就地改写 `options.provider/model`，改动能否真正到达出站 HTTP 请求？** 同时摸清瀑布交给插件的 payload 形状、`next()` 可否二次调用、`settings` 服务面、`session/event` 事件族。
 
@@ -14,12 +14,12 @@
    dsh plugin --profile <scratch-profile> add /absolute/path/to/probes/m0-rewrite-probe
    ```
 
-4. 读报告：`$DSH_HOME/umbra-probe/report.json`（Desktop 宿主无 stdout，报告是唯一出口）。
+4. 读报告：`$DSH_HOME/steward-probe/report.json`（Desktop 宿主无 stdout，报告是唯一出口）。
 5. 读完即从 profile 移除本插件（一次性探针）。
 
 ## 判读：`report.conclusion.rewriteBackend`
 
-| 判定 | 含义 | umbra-budget 主插件采取的后端 |
+| 判定 | 含义 | token-steward 主插件采取的后端 |
 |---|---|---|
 | `waterfall` | 公开路径**和** `prepareCall` 路径的改写都流到了出站请求（dispatcher 观测到 marker 模型，或 API 错误回显 marker 模型） | waterfall 就地改写为主，dispatcher 兜底 |
 | `waterfall-public-only` | 只有公开 `llm.stream` 路径生效；`prepareCall`（官方 agent loop 走的路）不生效 | agent loop 流量由 dispatcher 层强制；one-shot 走瀑布 |

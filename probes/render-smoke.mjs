@@ -1,13 +1,13 @@
 
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { UmbraBall } from '../src/client/components/UmbraBall.tsx'
-import { UmbraPanel } from '../src/client/components/UmbraPanel.tsx'
+import { StewardBall } from '../src/client/components/StewardBall.tsx'
+import { StewardPanel } from '../src/client/components/StewardPanel.tsx'
 
 const t = (key) => key
 const snapshot = {
   revision: 3,
-  mode: 'efficiency',
+  mode: 'balanced',
   updatedAt: 1000,
   usageAvailable: true,
   models: [
@@ -19,7 +19,7 @@ const snapshot = {
     { agentId: 'old_agent', provider: 'cheap', model: 'cheap-1', lastSeenAt: 0, requests: 3 },
   ],
   recent: [
-    { at: 900, requestId: 'r2', mode: 'efficiency', provider: 'strong', model: 'strong-1', degradedFrom: [{ provider: 'cheap', model: 'cheap-1', errorKind: 'rate-limit' }], ok: true, latencyMs: 500, committed: false },
+    { at: 900, requestId: 'r2', mode: 'balanced', provider: 'strong', model: 'strong-1', degradedFrom: [{ provider: 'cheap', model: 'cheap-1', errorKind: 'rate-limit' }], ok: true, latencyMs: 500, committed: false },
     { at: 800, requestId: 'r1', mode: 'frugal', provider: 'cheap', model: 'cheap-1', degradedFrom: [], ok: true, latencyMs: 120, committed: false },
   ],
   totals: { todayTokens: 2001200, todayCost: { currency: 'CNY', amount: 12.345 }, cacheHitRate: 0.5, degradedRequests: 1, unpricedModels: 1 },
@@ -29,8 +29,8 @@ const snapshot = {
 const store = { subscribe: () => () => {}, getState: () => state, refresh: async () => {}, setMode: async () => {}, reload: async () => {}, setOpen() {}, setVisible() {}, start() {}, stop() {} }
 const state = { snapshot, error: undefined, loading: false, open: true }
 
-const ballHtml = renderToStaticMarkup(createElement(UmbraBall, { snapshot, open: true, t, onToggle: () => {}, onCycleMode: () => {} }))
-const panelHtml = renderToStaticMarkup(createElement(UmbraPanel, { state, store, t, now: 200000, onClose: () => {} }))
+const ballHtml = renderToStaticMarkup(createElement(StewardBall, { snapshot, open: true, t, onToggle: () => {}, onCycleMode: () => {} }))
+const panelHtml = renderToStaticMarkup(createElement(StewardPanel, { state, store, t, now: 200000, onClose: () => {} }))
 
 console.log('--- BALL ---')
 console.log(ballHtml)
@@ -40,9 +40,9 @@ console.log(panelHtml.slice(0, 1800))
 console.log('')
 console.log('--- CHECKS ---')
 const checks = [
-  ['ball has data-dsh-plugin', ballHtml.includes('data-dsh-plugin="umbra-budget"')],
+  ['ball has data-dsh-plugin', ballHtml.includes('data-dsh-plugin="token-steward"')],
   ['ball has data-dsh-part="ball"', ballHtml.includes('data-dsh-part="ball"')],
-  ['ball tone = efficiency', ballHtml.includes('data-tone="efficiency"')],
+  ['ball tone = efficiency', ballHtml.includes('data-tone="balanced"')],
   ['ball badge shows cost', ballHtml.includes('¥12.35')],
   ['panel has role=dialog', panelHtml.includes('role="dialog"')],
   ['panel mode switch has 3 tabs', (panelHtml.match(/role="tab"/g) || []).length === 3],

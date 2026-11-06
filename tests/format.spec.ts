@@ -73,7 +73,7 @@ test('formatRemaining 对已到期返回 undefined', () => {
 })
 
 test('三个模式都有标签与解释，且顺序固定', () => {
-  assert.deepEqual(MODE_ORDER, ['frugal', 'efficiency', 'max_power'])
+  assert.deepEqual(MODE_ORDER, ['frugal', 'balanced', 'max_power'])
   for (const mode of MODE_ORDER) {
     assert.ok(MODE_LABEL[mode].length > 0)
     assert.ok(MODE_HINT[mode].length > 0)

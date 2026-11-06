@@ -33,7 +33,7 @@ const { default: OpenAI } = await import(process.env.OPENAI_SDK)
 const client = new OpenAI({ apiKey: 'local-token-abc', baseURL: 'http://127.0.0.1:' + port + '/v1' })
 
 const stream = await client.chat.completions.create({
-  model: 'umbra:auto',
+  model: 'steward:auto',
   messages: [{ role: 'user', content: 'ping' }],
   stream: true,
   stream_options: { include_usage: true },
@@ -59,4 +59,4 @@ console.log('usage  :', JSON.stringify(usage))
 console.log('')
 console.log('VERDICT T2 (baseURL=本地网关):', seen.url === '/v1/chat/completions' ? 'PASS' : 'FAIL url=' + seen.url)
 console.log('VERDICT T3 (usage 桶):', usage?.prompt_tokens === 11 && usage?.prompt_tokens_details?.cached_tokens === 4 ? 'PASS' : 'FAIL')
-console.log('VERDICT T6 (含冒号 id 透传):', seen.body.model === 'umbra:auto' ? 'PASS' : 'FAIL')
+console.log('VERDICT T6 (含冒号 id 透传):', seen.body.model === 'steward:auto' ? 'PASS' : 'FAIL')

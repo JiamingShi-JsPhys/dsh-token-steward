@@ -23,7 +23,7 @@ import type { RouteEventView } from '../src/core/types.ts'
 
 /** 一个临时目录；测试结束即删。 */
 async function scratch(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'umbra-test-'))
+  return mkdtemp(join(tmpdir(), 'steward-test-'))
 }
 
 /** 手动推进的时钟：不产生真实等待。 */
@@ -531,7 +531,7 @@ test('热重载：无法监视时报告一行诊断且不抛错', () => {
   const clock = manualTimers()
   const reports: string[] = []
   const watcher = createPoolWatcher(
-    join(tmpdir(), 'umbra-does-not-exist', 'model_pool.yaml'),
+    join(tmpdir(), 'steward-does-not-exist', 'model_pool.yaml'),
     () => {},
     (message) => reports.push(message),
     clock.timers,

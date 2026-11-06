@@ -1,102 +1,123 @@
 /**
- * 三个调度模式的打分器。
+ * 三个调度模式的打分器（六维评分版）。
  *
  * 打分只回答「在已经通过硬过滤的候选里，谁更该先上」；它不做能力过滤、
  * 不看网络、不读时钟（now 由 context 带入）。新增一种模式 = 新增一个 Scorer，
  * 过滤与降级逻辑一律不动。
  *
+ * 六维主键：每个请求带一个主维度（intent.dimension，由 intent.ts 推断），
+ * 三个模式都以该维的评分为主序——例如 coding 任务在 max_power 下优先选
+ * scores.coding.score 最高的模型。目录未收录的模型（无六维数据）回退到
+ * legacy 的 quality_rank / cost_level，行为与旧配置完全兼容。
+ *
  * 每个打分器都同时产出 reasons，面板直接展示，而不是事后编解释。
  */
-import type { ModelEntry, ModelHealth, RoutingMode, RouteIntent, ScoreContext, ScoreResult, Scorer } from './types.ts'
+import type { DimensionScore, ModelEntry, ModelHealth, RouteIntent, RoutingMode, ScoreContext, ScoreResult, Scorer } from './types.ts'
 
-/** 成本档位 → 分值。差距足够大，任何次级因子都无法翻转档位顺序。 */
-export const COST_TIER_SCORE: Record<ModelEntry['cost_level'], number> = {
-  free: 1000,
-  low: 800,
-  medium: 400,
-  high: 100,
+/** legacy 成本档位 → 每千 token 成本分（0..100，越高越便宜）。 */
+export const COST_LEVEL_SCORE: Record<ModelEntry['cost_level'], number> = {
+  free: 100,
+  low: 75,
+  medium: 50,
+  high: 20,
 }
 
-/** 延迟未知时的中性分（效率模式用）。 */
-const NEUTRAL_LATENCY_SCORE = 300
+/** 六维字母评级 → 序（max_power 的破平用；评级是独立事实，不做阈值推导）。 */
+export const TIER_RANK: Record<string, number> = {
+  SSS: 100, SS: 90, S: 80, 'A+': 72, A: 65, 'B+': 55, B: 50, 'C+': 40, C: 35, D: 20, NA: 0,
+}
 
-/** 延迟 0ms 的满分；每 10ms 扣 1 分，6000ms 归零。 */
-const LATENCY_FULL_MS = 0
-const LATENCY_ZERO_MS = 6000
+/** frugal 模式的「够用线」：主维度低于这个分的模型沉底，但不出局（仍是降级链候选）。 */
+export const FRUGAL_FLOOR = 30
 
-/** 效率模式：fast 标签的固定加成。 */
-const FAST_BONUS = 600
+/** balanced 模式的混合权重：质量 0.65 + 成本 0.35。 */
+export const BALANCED_QUALITY_WEIGHT = 0.65
+export const BALANCED_COST_WEIGHT = 0.35
 
-/** 效率模式：每个进行中请求的扣分（天然把并发摊开）。 */
-const INFLIGHT_PENALTY = 200
+/** balanced 模式：每个在飞请求的扣分（把并发摊开）。 */
+const INFLIGHT_PENALTY = 20
 
 /**
- * 效率模式：同一 burst 批次内已派给该模型的次数扣分。
- * 大到足以盖过任何能力与延迟差——「先用还没被派的模型」是这个模式的定义，
- * 不是倾向。
+ * balanced 模式：同一 burst 批次内已派次数的扣分——idea_swarm 打散仍然成立。
+ * 大于 blend 的满分区（100×100）：同 burst 内已派过的模型必须让位给任何
+ * 还没派过的合格候选，「先用没派过的」是这个模式的定义，不是倾向。
  */
-const BURST_PENALTY = 10_000
+const BURST_PENALTY = 20_000
 
-/** frugal 模式：每个进行中请求的扣分，远小于成本档位差。 */
+/** frugal 模式：在飞扣分远小于成本差。 */
 const FRUGAL_INFLIGHT_PENALTY = 5
 
-/** max_power 模式：质量分的放大系数。 */
-const QUALITY_WEIGHT = 10
-
-/** max_power 模式：每个能力标签的加成（标签越全越顶配）。 */
-const CAPABILITY_WEIGHT = 5
-
-/** max_power 模式：上下文窗口的归一化上限与权重。 */
-const CONTEXT_WINDOW_UNIT = 100_000
-const CONTEXT_WINDOW_CAP = 20
-
-/** 把延迟换成 0..600 的分数；未知延迟取中性值。 */
-function latencyScore(health: ModelHealth): number {
-  if (health.ewmaLatencyMs === undefined) return NEUTRAL_LATENCY_SCORE
-  const span = LATENCY_ZERO_MS - LATENCY_FULL_MS
-  const raw = (LATENCY_ZERO_MS - health.ewmaLatencyMs) / span
-  return Math.max(0, Math.min(1, raw)) * (LATENCY_ZERO_MS / 10)
+/** 主维度分数 + 来源（六维 or legacy）。 */
+export interface DimensionReading {
+  score: number
+  grade: string
+  source: 'six-dim' | 'legacy'
 }
 
-/** 保留两位小数，既稳定又可读（浮点噪声会让「同分」判定变得不可测）。 */
+/** 读一个模型在请求主维度上的分数；无六维数据时回退 quality_rank。 */
+export function dimensionReading(model: ModelEntry, intent: RouteIntent): DimensionReading {
+  const reading = model.dimensions?.[intent.dimension]
+  if (reading !== undefined) return { score: reading.score, grade: reading.grade, source: 'six-dim' }
+  return { score: model.quality_rank, grade: 'legacy', source: 'legacy' }
+}
+
+/**
+ * 每千 token 成本分（0..100，越高越便宜）。
+ * 优先 costPer1kOutput（目录/厂商覆盖）；回退 legacy pricing（每百万）与 cost_level。
+ * null = 未定价 → 50（中性：frugal 不特殊偏爱，balanced 不特殊惩罚）。
+ */
+export function costScoreOf(model: ModelEntry): { per1k: number | null, score: number } {
+  const per1k = model.costPer1kOutput
+    ?? (model.pricing !== undefined ? model.pricing.output_per_mtok / 1000 : null)
+  if (per1k === null || per1k === undefined || !Number.isFinite(per1k)) {
+    return { per1k: null, score: COST_LEVEL_SCORE[model.cost_level] }
+  }
+  // $0.001/1k ≈ 99 分，$0.08/1k ≈ 4 分：对常见价差足够敏感。
+  return { per1k, score: Math.max(0, Math.min(100, 100 - per1k * 1200)) }
+}
+
+/** 保留两位小数（浮点噪声会让「同分」判定不可测）。 */
 function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
 
 /**
- * 极致便宜：成本档位是绝对主序；同档位里先要快的，再要空闲的，
- * 最后用质量分兜底——「够用就好」不等于「故意挑最差的」。
+ * 极致便宜：成本是绝对主序，主维度分数只在同成本内破平；
+ * 低于「够用线」的模型沉到所有合格候选之后（仍是降级链的一部分）。
  */
-export const frugalScorer: Scorer = (model, _intent, health, context): ScoreResult => {
-  const tier = COST_TIER_SCORE[model.cost_level]
-  const latency = latencyScore(health) * 0.1
+export const frugalScorer: Scorer = (model, intent, health, _context): ScoreResult => {
+  const reading = dimensionReading(model, intent)
+  const cost = costScoreOf(model)
   const spread = health.inFlight * FRUGAL_INFLIGHT_PENALTY
-  const quality = model.quality_rank * 0.01
+  const floorPenalty = reading.score < FRUGAL_FLOOR ? 1_000_000 : 0
   return {
-    score: round2(tier + latency - spread + quality),
+    // cost.score 越高越便宜 → 直接作为主序；主维度分数只在同成本内破平。
+    score: round2(cost.score * 1000 + reading.score * 10 - spread - floorPenalty),
     reasons: [
-      'cost:' + model.cost_level,
-      health.ewmaLatencyMs === undefined ? 'latency:unknown' : 'latency:' + Math.round(health.ewmaLatencyMs) + 'ms',
+      cost.per1k === null ? 'cost:' + model.cost_level : 'cost:$' + cost.per1k.toFixed(4) + '/1k',
+      'dim ' + intent.dimension + ':' + String(reading.score) + '(' + reading.grade + ')',
       'inflight:' + String(health.inFlight) + '/' + String(model.max_concurrency),
+      ...(reading.score < FRUGAL_FLOOR ? ['below-floor:' + String(FRUGAL_FLOOR)] : []),
     ],
   }
 }
 
 /**
- * 效率优先：fast 标签 + 实测延迟为主，burst 内已派次数与在飞请求数把
- * 并发摊开——四个子代理同时开工时自然落到四个不同模型，而不是一起撞 429。
+ * 效率优先（balanced）：质量与成本的加权混合为主序；
+ * burst 内已派次数与在飞请求数把并发摊开——四个子代理同时开工时
+ * 自然落到四个不同模型，而不是一起撞 429。
  */
-export const efficiencyScorer: Scorer = (model, _intent, health, context): ScoreResult => {
-  const fast = model.capabilities.includes('fast') ? FAST_BONUS : 0
-  const latency = latencyScore(health)
+export const balancedScorer: Scorer = (model, intent, health, context): ScoreResult => {
+  const reading = dimensionReading(model, intent)
+  const cost = costScoreOf(model)
+  const blend = BALANCED_QUALITY_WEIGHT * reading.score + BALANCED_COST_WEIGHT * cost.score
   const spread = health.inFlight * INFLIGHT_PENALTY
   const burst = context.burstLoad * BURST_PENALTY
-  const quality = model.quality_rank * 0.5
   return {
-    score: round2(fast + latency - spread - burst + quality),
+    score: round2(blend * 100 - spread - burst),
     reasons: [
-      ...(fast > 0 ? ['tag:fast'] : []),
-      health.ewmaLatencyMs === undefined ? 'latency:unknown' : 'latency:' + Math.round(health.ewmaLatencyMs) + 'ms',
+      'dim ' + intent.dimension + ':' + String(reading.score) + '(' + reading.grade + ')',
+      cost.per1k === null ? 'cost:' + model.cost_level : 'cost:$' + cost.per1k.toFixed(4) + '/1k',
       'burst:' + String(context.burstLoad),
       'inflight:' + String(health.inFlight) + '/' + String(model.max_concurrency),
     ],
@@ -104,19 +125,19 @@ export const efficiencyScorer: Scorer = (model, _intent, health, context): Score
 }
 
 /**
- * 最强火力：质量分是主序，能力标签数量次之，上下文窗口再次之；
- * 延迟只作为同分时的微调，绝不让「快但弱」翻到前面。
+ * 最强火力：请求主维度的六维分数是绝对主序，Tier 评级破平，
+ * 上下文窗口再次之；延迟只作同分微调，绝不让「快但弱」翻盘。
  */
-export const maxPowerScorer: Scorer = (model, _intent, health, _context): ScoreResult => {
-  const quality = model.quality_rank * QUALITY_WEIGHT
-  const caps = model.capabilities.length * CAPABILITY_WEIGHT
-  const window = Math.min(model.context_window / CONTEXT_WINDOW_UNIT, CONTEXT_WINDOW_CAP)
+export const maxPowerScorer: Scorer = (model, intent, health, _context): ScoreResult => {
+  const reading = dimensionReading(model, intent)
+  const tierRank = TIER_RANK[model.tier ?? ''] ?? 0
+  const window = Math.min(model.context_window / 100_000, 20)
   const latency = health.ewmaLatencyMs === undefined ? 0 : -(health.ewmaLatencyMs / 1000)
   return {
-    score: round2(quality + caps + window + latency),
+    score: round2(reading.score * 10 + tierRank + window + latency),
     reasons: [
-      'quality:' + String(model.quality_rank),
-      'caps:' + String(model.capabilities.length),
+      'dim ' + intent.dimension + ':' + String(reading.score) + '(' + reading.grade + ')',
+      'tier:' + (model.tier ?? 'NA'),
       'window:' + String(model.context_window),
     ],
   }
@@ -125,7 +146,7 @@ export const maxPowerScorer: Scorer = (model, _intent, health, _context): ScoreR
 /** 模式 → 打分器。 */
 export const SCORERS: Record<RoutingMode, Scorer> = {
   frugal: frugalScorer,
-  efficiency: efficiencyScorer,
+  balanced: balancedScorer,
   max_power: maxPowerScorer,
 }
 
@@ -144,3 +165,7 @@ export function scoreModel(
 ): ScoreResult {
   return scorerFor(mode)(model, intent, health, context)
 }
+
+/** 旧导出名兼容（外部曾以 COST_TIER_SCORE 引用成本档位表）。 */
+export const COST_TIER_SCORE = COST_LEVEL_SCORE
+export type { DimensionScore }

@@ -128,7 +128,7 @@ test('buildHeaders 在没有凭据时不带 authorization', () => {
 })
 
 test('rewriteBody 把 model 换成上游真实 id，其余原样', () => {
-  const next = rewriteBody({ model: 'umbra:auto', messages: [{ role: 'user', content: 'hi' }], temperature: 0.2 }, 'a1')
+  const next = rewriteBody({ model: 'steward:auto', messages: [{ role: 'user', content: 'hi' }], temperature: 0.2 }, 'a1')
   assert.equal(next.model, 'a1')
   assert.equal(next.temperature, 0.2)
   assert.deepEqual(next.messages, [{ role: 'user', content: 'hi' }])
@@ -199,7 +199,7 @@ function context(fetchImpl: FetchLike, secrets: Array<[string, string]>): Dispat
   let clock = 1_000
   return {
     requestId: 'r1',
-    body: { model: 'umbra:auto', messages: [{ role: 'user', content: 'hi' }], stream: true },
+    body: { model: 'steward:auto', messages: [{ role: 'user', content: 'hi' }], stream: true },
     stream: true,
     secrets: new Map(secrets),
     fetchImpl,

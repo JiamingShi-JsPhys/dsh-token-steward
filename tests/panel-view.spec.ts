@@ -97,11 +97,11 @@ test('headline 在没有未定价时不给 costNote', () => {
 /* ────────────────────────── 模式 ────────────────────────── */
 
 test('modeOptions 固定三个选项且恰好一个 active', () => {
-  const options = modeOptions(snapshot({ mode: 'efficiency' }))
+  const options = modeOptions(snapshot({ mode: 'balanced' }))
   assert.equal(options.length, 3)
   assert.equal(options.filter((option) => option.active).length, 1)
-  assert.equal(options.find((option) => option.active)?.mode, 'efficiency')
-  assert.deepEqual(options.map((option) => option.mode), ['frugal', 'efficiency', 'max_power'])
+  assert.equal(options.find((option) => option.active)?.mode, 'balanced')
+  assert.deepEqual(options.map((option) => option.mode), ['frugal', 'balanced', 'max_power'])
 })
 
 test('modeOptions 每个按钮都有解释文案', () => {

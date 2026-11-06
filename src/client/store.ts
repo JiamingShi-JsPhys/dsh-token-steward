@@ -8,7 +8,7 @@
  *  - 错误是一等状态：失败不清空上一份快照，只挂一条错误行。
  */
 import type { MatrixSnapshot, RoutingMode } from '../core/types.ts'
-import type { PanelClient } from './api.ts'
+import type { CatalogVendor, DiscoveredModel, PanelClient, VendorView } from './api.ts'
 
 /** 面板打开时的轮询间隔。 */
 export const OPEN_POLL_MS = 5_000
@@ -28,6 +28,8 @@ export interface PanelState {
   open: boolean
   /** 网关接线参数；未启动时 undefined。 */
   gateway: import('./api.ts').GatewayInfo | undefined
+  /** 厂家配置（设置页用）；未拉取时 undefined。 */
+  vendors: { mode: RoutingMode, vendors: VendorView[], catalog: CatalogVendor[] } | undefined
 }
 
 /** 仓库。 */
@@ -40,6 +42,12 @@ export interface PanelStore {
   setMode(mode: RoutingMode): Promise<void>
   /** 重新读配置文件。 */
   reload(): Promise<void>
+  /** 拉一次厂家配置（设置页打开时调用）。 */
+  refreshVendors(): Promise<void>
+  /** 整表保存厂家配置；apiKey 空串 = 保留已存明文。 */
+  saveVendors(mode: RoutingMode, vendors: unknown): Promise<void>
+  /** 探测上游模型列表；失败抛错给调用方展示。 */
+  discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<DiscoveredModel[]>
   /** 展开 / 收起面板；展开时会立刻刷新一次。 */
   setOpen(open: boolean): void
   /** 页面可见性变化。 */
@@ -51,7 +59,7 @@ export interface PanelStore {
 
 /** 建一个仓库。 */
 export function createPanelStore(client: PanelClient): PanelStore {
-  let state: PanelState = { snapshot: undefined, error: undefined, loading: false, open: false, gateway: undefined }
+  let state: PanelState = { snapshot: undefined, error: undefined, loading: false, open: false, gateway: undefined, vendors: undefined }
   const listeners = new Set<() => void>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let visible = true
@@ -151,6 +159,22 @@ export function createPanelStore(client: PanelClient): PanelStore {
     schedule()
   }
 
+  async function refreshVendors(): Promise<void> {
+    try {
+      const vendors = await client.vendors()
+      set({ vendors })
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  }
+
+  async function discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<DiscoveredModel[]> {
+    const gateway = state.gateway
+    if (gateway === undefined) throw new Error('gateway is not running')
+    const body = await client.discoverModels(gateway, params)
+    return body.data
+  }
+
   return {
     subscribe(listener) {
       listeners.add(listener)
@@ -160,6 +184,16 @@ export function createPanelStore(client: PanelClient): PanelStore {
     refresh,
     setMode,
     reload,
+    refreshVendors,
+    discoverModels,
+    async saveVendors(mode, vendors) {
+      try {
+        await client.saveVendors(mode, vendors)
+        await refreshVendors()
+      } catch (error) {
+        set({ error: messageOf(error) })
+      }
+    },
     setOpen,
     setVisible,
     start() {

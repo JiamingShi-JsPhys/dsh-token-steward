@@ -8,7 +8,7 @@ import type { ReactNode } from 'react'
 import type { ModelCardView } from '../../core/types.ts'
 import { groupByCost } from '../../core/panel-view.ts'
 import { ModelCard } from './ModelCard.tsx'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 模型阵列的 props。 */
 export interface ModelGridProps {

@@ -12,13 +12,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { MatrixSnapshot, RoutingMode } from '../../core/types.ts'
 import { ballBadge } from '../../core/panel-view.ts'
 import { MODE_ORDER } from '../../core/format.ts'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 长按判定阈值。 */
 const LONG_PRESS_MS = 600
 
 /** 悬浮球的 props。 */
-export interface UmbraBallProps {
+export interface StewardBallProps {
   snapshot: MatrixSnapshot | undefined
   open: boolean
   t(key: string): string
@@ -27,7 +27,7 @@ export interface UmbraBallProps {
 }
 
 /** 悬浮球。 */
-export function UmbraBall(props: UmbraBallProps): ReactNode {
+export function StewardBall(props: StewardBallProps): ReactNode {
   const [pressed, setPressed] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -65,7 +65,7 @@ export function UmbraBall(props: UmbraBallProps): ReactNode {
     <button
       type="button"
       className={css.ball}
-      data-dsh-plugin="umbra-budget"
+      data-dsh-plugin="token-steward"
       data-dsh-part="ball"
       data-tone={tone}
       data-open={props.open ? 'true' : 'false'}

@@ -93,7 +93,7 @@ test('emptyProjection 明确标出不可用', () => {
 })
 
 test('readUsageProjection：文件不存在时不可用并说明可能是没装 dsh-usage', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'umbra-usage-'))
+  const dir = await mkdtemp(join(tmpdir(), 'steward-usage-'))
   const projection = await readUsageProjection(dir, new Date(2026, 10, 6).getTime())
   assert.equal(projection.available, false)
   assert.ok((projection.error ?? '').includes('dsh-usage'))
@@ -101,7 +101,7 @@ test('readUsageProjection：文件不存在时不可用并说明可能是没装 
 })
 
 test('readUsageProjection：真实台账被正确读成今天的事实', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'umbra-usage-'))
+  const dir = await mkdtemp(join(tmpdir(), 'steward-usage-'))
   const now = new Date(2026, 10, 6, 12, 0, 0).getTime()
   const dateKey = localDateKey(now)
   await mkdir(join(dir, 'dsh-usage'), { recursive: true })
@@ -116,7 +116,7 @@ test('readUsageProjection：真实台账被正确读成今天的事实', async (
 })
 
 test('readUsageProjection：损坏的 JSON 不可用但给出原因', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'umbra-usage-'))
+  const dir = await mkdtemp(join(tmpdir(), 'steward-usage-'))
   await mkdir(join(dir, 'dsh-usage'), { recursive: true })
   await writeFile(join(dir, 'dsh-usage', 'usage-ledger.json'), 'not json')
   const projection = await readUsageProjection(dir, Date.now())
@@ -157,7 +157,7 @@ function api(overrides: Partial<PanelApi> = {}): PanelApi {
     snapshot: () => ({ revision: 1, mode: 'frugal' }),
     setMode: () => true,
     reload: async () => ({ ok: true, status: 'ok' }),
-    gateway: () => ({ baseUrl: 'http://127.0.0.1:1/v1', token: 'tok', modelIds: ['umbra:auto'], port: 1 }),
+    gateway: () => ({ baseUrl: 'http://127.0.0.1:1/v1', token: 'tok', modelIds: ['steward:auto'], port: 1 }),
     ...overrides,
   }
 }

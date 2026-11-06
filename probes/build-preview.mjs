@@ -2,13 +2,13 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { writeFileSync, readFileSync } from 'node:fs'
-import { UmbraBall } from '../src/client/components/UmbraBall.tsx'
-import { UmbraPanel } from '../src/client/components/UmbraPanel.tsx'
-import { UmbraSettings } from '../src/client/settings/UmbraSettings.tsx'
+import { StewardBall } from '../src/client/components/StewardBall.tsx'
+import { StewardPanel } from '../src/client/components/StewardPanel.tsx'
+import { SettingsPanel } from '../src/client/settings/SettingsPanel.tsx'
 
 const t = (key) => ({
   'ball.open': '展开模型矩阵', 'ball.close': '收起模型矩阵', 'ball.badge': '今日花费',
-  'panel.title': 'Umbra 模型矩阵', 'panel.subtitle': '按任务属性自动分发；失败自动换人',
+  'panel.title': 'Steward 模型矩阵', 'panel.subtitle': '按任务属性自动分发；失败自动换人',
   'panel.close': '关闭', 'panel.reload': '重新读取配置',
   'panel.tab.routes': '路由监控', 'panel.tab.agents': '代理协作',
   'headline.tokens': '今日 token', 'headline.cost': '今日花费', 'headline.cache': '缓存命中', 'headline.degraded': '降级请求',
@@ -16,7 +16,7 @@ const t = (key) => ({
   'models.cost': '今日花费', 'models.cache': '缓存', 'models.unpriced': '未定价',
   'routes.empty': '还没有请求经过矩阵。', 'routes.ok': '成功', 'routes.failed': '失败',
   'agents.empty': '还没有子代理使用矩阵。', 'agents.idle': '空闲', 'panel.error': '错误',
-  'settings.title': 'Umbra 模型矩阵', 'settings.description': '配置模型池、调度模式与网关接线',
+  'settings.title': 'Steward 模型矩阵', 'settings.description': '配置模型池、调度模式与网关接线',
   'settings.poolPath': '配置文件路径', 'settings.gateway': '网关地址', 'settings.token': '本地令牌',
   'settings.copy': '复制', 'settings.copied': '已复制', 'settings.status': '配置状态',
   'settings.mode': '默认调度模式', 'settings.retainDays': '台账保留天数',
@@ -24,7 +24,7 @@ const t = (key) => ({
 }[key] ?? key)
 
 const snapshot = {
-  revision: 3, mode: 'efficiency', updatedAt: 0, usageAvailable: true,
+  revision: 3, mode: 'balanced', updatedAt: 0, usageAvailable: true,
   models: [
     { provider: 'deepseek-official', model: 'deepseek-flash', displayName: 'DeepSeek V4.1 Flash', capabilities: ['fast','coding','tool-use','long-context'], costLevel: 'low', contextWindow: 1000000, availability: 'direct', health: 'active', inFlight: 2, latencyMs: 820, todayTokens: 1240000, todayCost: { currency: 'CNY', amount: 3.42 }, cacheHitRate: 0.62 },
     { provider: 'agnes', model: 'agnes-3.0-flash', displayName: 'Agnes 3.0 Flash', capabilities: ['fast','coding','vision'], costLevel: 'free', contextWindow: 128000, availability: 'direct', health: 'active', inFlight: 0, latencyMs: 410, todayTokens: 88000, todayCost: null, cacheHitRate: 0.31 },
@@ -37,12 +37,12 @@ const snapshot = {
     { agentId: 'stale_agent', provider: 'mirror-cn', model: 'glm-5.3-flash', lastSeenAt: Date.now() - 600000, requests: 2 },
   ],
   recent: [
-    { at: 0, requestId: 'r1', mode: 'efficiency', provider: 'frontier', model: 'frontier-max', degradedFrom: [{ provider: 'mirror-cn', model: 'glm-5.3-flash', errorKind: 'rate-limit' }], ok: true, latencyMs: 1400, committed: false },
+    { at: 0, requestId: 'r1', mode: 'balanced', provider: 'frontier', model: 'frontier-max', degradedFrom: [{ provider: 'mirror-cn', model: 'glm-5.3-flash', errorKind: 'rate-limit' }], ok: true, latencyMs: 1400, committed: false },
     { at: 0, requestId: 'r2', mode: 'frugal', provider: 'agnes', model: 'agnes-3.0-flash', degradedFrom: [], ok: true, latencyMs: 380, committed: false },
     { at: 0, requestId: 'r3', mode: 'max_power', provider: 'frontier', model: 'frontier-max', degradedFrom: [{ provider: 'frontier', model: 'frontier-max', errorKind: 'timeout' }], ok: false, latencyMs: 60000, committed: false },
   ],
   totals: { todayTokens: 4948000, todayCost: { currency: 'CNY', amount: 31.52 }, cacheHitRate: 0.4567, degradedRequests: 2, unpricedModels: 2 },
-  pool: { status: 'ok', source: 'C:/Users/x/.dsh/umbra-budget/model_pool.yaml' },
+  pool: { status: 'ok', source: 'C:/Users/x/.dsh/token-steward/model_pool.yaml' },
 }
 const store = { subscribe: () => () => {}, getState: () => state, refresh: async () => {}, setMode: async () => {}, reload: async () => {}, setOpen() {}, setVisible() {}, start() {}, stop() {} }
 const state = { snapshot, error: undefined, loading: false, open: true, gateway: { baseUrl: 'http://127.0.0.1:52000/v1', token: 'preview-token-placeholder', modelIds: [], port: 52000 } }
@@ -67,9 +67,9 @@ function tokens(t) {
 
 // esbuild 与本入口同批产出 .cache/preview-bundle.css，类名与组件里的 css.* 完全一致。
 const css = readFileSync('.cache/preview-bundle.css', 'utf8')
-const panel = renderToStaticMarkup(createElement(UmbraPanel, { state, store, t, now: Date.now(), onClose: () => {} }))
-const ball = renderToStaticMarkup(createElement(UmbraBall, { snapshot, open: true, t, onToggle: () => {}, onCycleMode: () => {} }))
-const settings = renderToStaticMarkup(createElement(UmbraSettings, { snapshot, gateway: state.gateway, poolPath: snapshot.pool.source, retainDays: 180, onReload: () => {}, onSelectMode: () => {}, t, copy: async () => {} }))
+const panel = renderToStaticMarkup(createElement(StewardPanel, { state, store, t, now: Date.now(), onClose: () => {} }))
+const ball = renderToStaticMarkup(createElement(StewardBall, { snapshot, open: true, t, onToggle: () => {}, onCycleMode: () => {} }))
+const settings = renderToStaticMarkup(createElement(SettingsPanel, { snapshot, gateway: state.gateway, poolPath: snapshot.pool.source, retainDays: 180, onReload: () => {}, onSelectMode: () => {}, t, copy: async () => {} }))
 
 function stage(theme) {
   return '<div class="stage" style="' + tokens(previewHtml[theme]) + ';background:' + previewHtml[theme].body + '">'
@@ -89,8 +89,8 @@ const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + 'body{
   + '.col{position:relative}'
   + '.colPanel{width:600px;flex:none}'
   + '.colSettings{width:440px;flex:none}'
-  + '.colPanel .umbra_panel{position:relative;right:auto;bottom:auto;width:100%;max-height:none}'
-  + '.colPanel .umbra_ball{position:relative;right:auto;bottom:auto;margin-top:12px;display:inline-flex;width:auto}'
+  + '.colPanel .steward_panel{position:relative;right:auto;bottom:auto;width:100%;max-height:none}'
+  + '.colPanel .steward_ball{position:relative;right:auto;bottom:auto;margin-top:12px;display:inline-flex;width:auto}'
   + css
   + '</style></head><body>' + stage('light') + stage('dark') + '</body></html>'
 

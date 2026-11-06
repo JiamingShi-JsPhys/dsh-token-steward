@@ -1,0 +1,84 @@
+{
+  "format": 1,
+  "title": {
+    "zh": "dsh-umbra-budget 市场索引（发布前示例 — 勿原样发布）",
+    "en": "dsh-umbra-budget market index (example — do not publish as-is)"
+  },
+  "description": {
+    "zh": "发布清单模板：填入真实仓库 URL 与 commit 后再发布。参考 dsh-provider-proxy 的 check:market 流程。",
+    "en": "Publishing template: fill in the real repository URL and commit before publishing. See dsh-provider-proxy's check:market flow."
+  },
+  "metadata": {
+    "categories": {
+      "orchestration": {
+        "title": {
+          "zh": "调度与编排",
+          "en": "Orchestration"
+        }
+      }
+    },
+    "labels": {
+      "model-matrix": {
+        "title": {
+          "zh": "模型矩阵",
+          "en": "Model matrix"
+        }
+      },
+      "cost": {
+        "title": {
+          "zh": "成本控制",
+          "en": "Cost control"
+        }
+      }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-umbra-budget",
+      "title": {
+        "zh": "Umbra Budget · 模型矩阵调度中枢",
+        "en": "Umbra Budget · Model Matrix Orchestrator"
+      },
+      "description": {
+        "zh": "把任意 OpenAI 兼容端点接入一个模型矩阵：按任务属性在极致便宜/效率优先/最强火力三模式间自动分发，动态容灾、用量台账、实时控制台。",
+        "en": "Pool any OpenAI-compatible endpoint into one model matrix: route every call by task profile across frugal/efficiency/max-power modes, with transparent failover, usage ledger and a live console."
+      },
+      "author": "dsh-umbra-budget contributors",
+      "homepage": "https://example.com/your-org/DSH-Umbra-Budget",
+      "repository": {
+        "url": "https://example.com/your-org/DSH-Umbra-Budget.git"
+      },
+      "metadata": {
+        "category": "orchestration",
+        "keywords": [
+          "model-matrix",
+          "routing",
+          "failover",
+          "cost",
+          "console"
+        ],
+        "labels": [
+          "model-matrix",
+          "cost"
+        ],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 0,
+          "source": {
+            "type": "git",
+            "url": "https://example.com/your-org/DSH-Umbra-Budget.git",
+            "commit": "0000000000000000000000000000000000000000"
+          },
+          "engines": {
+            "dsh": "^0.2.2-rc.1",
+            "node": ">=22"
+          }
+        }
+      ]
+    }
+  ]
+}

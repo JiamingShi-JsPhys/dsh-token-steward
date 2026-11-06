@@ -1,4 +1,4 @@
-# dsh-umbra-budget · 模型矩阵调度中枢
+# dsh-token-steward · 模型矩阵调度中枢
 
 把**任意** OpenAI 兼容的服务接进一个矩阵——官方 API、免费镜像、cc switch 转出来的
 代理、贵但全能的顶配模型——然后按任务属性自动选路、失败自动换人、用量与成本一眼可见。
@@ -65,15 +65,15 @@ token 的唯一真相源是 `dsh-usage` 的按日台账；本插件另记一条*
 
 ```bash
 # 1. 让 profile 依赖本包
-cd ~/.dsh/profiles/desktop && pnpm add dsh-umbra-budget
+cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 
 # 2. 在 cordis.patch.yml 里插入本行（内容见包内 cordis.patch.yml）
 ```
 
 首次启动后：
 
-1. 编辑 `$DSH_HOME/umbra-budget/model_pool.yaml`（字段见 `model_pool.example.yaml`）；
-2. 读 `$DSH_HOME/umbra-budget/gateway.json` 拿到 `baseUrl` 与 `token`；
+1. 编辑 `$DSH_HOME/token-steward/model_pool.yaml`（字段见 `model_pool.example.yaml`）；
+2. 读 `$DSH_HOME/token-steward/gateway.json` 拿到 `baseUrl` 与 `token`；
 3. 在 profile 里把 `llm-pi-ai` 指向网关：
 
 ```yaml
@@ -81,16 +81,16 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-umbra-budget
   name: '@deepseek-ai/dsh-llm-pi-ai'
   config:
     providers:
-      umbra:
-        displayName: Umbra Matrix
+      steward:
+        displayName: Steward Matrix
         api: openai-completions
-        apiKeyEnv: UMBRA_LOCAL_TOKEN      # 环境变量里放上一步的 token
+        apiKeyEnv: STEWARD_LOCAL_TOKEN      # 环境变量里放上一步的 token
         baseURL: http://127.0.0.1:<port>/v1
         models:
-          - { id: 'umbra:auto', name: 'Umbra Auto' }
-          - { id: 'umbra:frugal', name: 'Umbra Frugal' }
-          - { id: 'umbra:efficiency', name: 'Umbra Efficiency' }
-          - { id: 'umbra:max_power', name: 'Umbra Max Power' }
+          - { id: 'steward:auto', name: 'Steward Auto' }
+          - { id: 'steward:frugal', name: 'Steward Frugal' }
+          - { id: 'steward:balanced', name: 'Steward Efficiency' }
+          - { id: 'steward:max_power', name: 'Steward Max Power' }
 ```
 
 改完 profile 需要**重启 DSH 服务**才生效。
@@ -99,10 +99,10 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-umbra-budget
 
 | id | 含义 |
 |---|---|
-| `umbra:auto` | 按当前全局模式选路（面板切模式 = 切它） |
-| `umbra:frugal` / `umbra:efficiency` / `umbra:max_power` | 钉死某个模式 |
-| `umbra:pin/<provider>/<model>` | 直通某个具体模型（仍走熔断与计量） |
-| `umbra:alias/<name>` | `routing.aliases` 里定义的自定义意图 |
+| `steward:auto` | 按当前全局模式选路（面板切模式 = 切它） |
+| `steward:frugal` / `steward:balanced` / `steward:max_power` | 钉死某个模式 |
+| `steward:pin/<provider>/<model>` | 直通某个具体模型（仍走熔断与计量） |
+| `steward:alias/<name>` | `routing.aliases` 里定义的自定义意图 |
 
 也可以直接写矩阵里某个真实模型 id，网关会直通到它。
 
@@ -131,7 +131,7 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-umbra-budget
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 关闭则完全不挂载 |
-| `poolPath` | `$DSH_HOME/umbra-budget/model_pool.yaml` | 矩阵配置路径 |
+| `poolPath` | `$DSH_HOME/token-steward/model_pool.yaml` | 矩阵配置路径 |
 | `retainDays` | `180` | 路由台账保留天数 |
 | `usagePollMs` | `15000` | 读 dsh-usage 台账的间隔（最小 2000） |
 | `gatewayPort` | `0` | 网关端口，0 = 系统分配 |

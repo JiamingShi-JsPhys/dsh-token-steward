@@ -93,7 +93,7 @@ function compareCandidates(left: RouteCandidate, right: RouteCandidate): number 
 }
 
 /** 路由引擎。 */
-export interface UmbraRouter {
+export interface StewardRouter {
   /**
    * 排一次路由。
    * @param intent - 从请求推断出的意图。
@@ -132,7 +132,7 @@ export interface UmbraRouter {
  * @param options - 可调参数；缺省取 config.defaults。
  * @param mode - 初始模式；缺省取 config.routing.mode。
  */
-export function createRouter(config: PoolConfig, options?: Partial<RouterOptions>, mode?: RoutingMode): UmbraRouter {
+export function createRouter(config: PoolConfig, options?: Partial<RouterOptions>, mode?: RoutingMode): StewardRouter {
   const resolved: RouterOptions = {
     maxAttempts: options?.maxAttempts ?? config.defaults.max_attempts,
     cooldownMs: options?.cooldownMs ?? config.defaults.cooldown_ms,
@@ -392,6 +392,8 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
         provider: entry.provider.provider_name,
         model: entry.model.id,
         displayName: entry.model.display_name,
+        ...(entry.model.tier !== undefined ? { tier: entry.model.tier } : {}),
+        ...(entry.model.dimensions !== undefined ? { dimensions: entry.model.dimensions } : {}),
         capabilities: entry.model.capabilities.slice(),
         costLevel: entry.model.cost_level,
         contextWindow: entry.model.context_window,

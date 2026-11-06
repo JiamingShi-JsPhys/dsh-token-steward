@@ -9,15 +9,16 @@
  *  - 只绑 127.0.0.1，端口由系统分配（0），因此不会与任何已有服务抢端口；
  *  - 每次启动生成一个随机本地令牌，客户端必须带 `Authorization: Bearer <token>`；
  *    这不是加密，而是防止本机上其它进程顺手把请求打进矩阵；
- *  - 令牌与端口写进 `$DSH_HOME/umbra-budget/gateway.json`（0600），
+ *  - 令牌与端口写进 `$DSH_HOME/token-steward/gateway.json`（0600），
  *    这是 profile 接线时唯一需要读的东西。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode } from '../core/types.ts'
-import type { UmbraRouter } from '../core/router.ts'
+import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode, VendorConfig } from '../core/types.ts'
+import type { StewardRouter } from '../core/router.ts'
 import { inferIntent } from '../core/intent.ts'
 import { cacheKeyOf, LruTtlCache, type CachedResponse } from '../core/response-cache.ts'
+import { matchTemplateModel, PROVIDER_TEMPLATES } from '../core/provider-templates.ts'
 import { dispatch, usageFromBody, type FetchLike } from './upstream.ts'
 import type { RouteLedgerStore } from './ledger-store.ts'
 import { modelKey } from '../core/router.ts'
@@ -37,7 +38,9 @@ export interface GatewayOptions {
   /** 当前生效配置的读取器；配置热重载后这里返回新对象。 */
   config(): PoolConfig | undefined
   /** 路由引擎。 */
-  router(): UmbraRouter
+  router(): StewardRouter
+  /** 厂家配置（vendors.json）；发现端点用它解析 vendor 参数。 */
+  vendors?(): VendorConfig[]
   /** 已展开的凭据（provider → 明文）。 */
   secrets(): Map<string, string>
   /** 路由台账；可为空（未启用持久化时）。 */
@@ -121,7 +124,7 @@ function bearerOf(req: IncomingMessage): string {
 
 /** 网关公布的模型 id 列表：4 个虚拟 id + 矩阵里每个真实模型。 */
 export function publishedModelIds(config: PoolConfig | undefined): string[] {
-  const ids = ['umbra:auto', 'umbra:frugal', 'umbra:efficiency', 'umbra:max_power']
+  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power']
   if (config === undefined) return ids
   for (const provider of config.providers) {
     for (const model of provider.models) {
@@ -180,12 +183,21 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     }
 
     if (path === '/v1/models' && req.method === 'GET') {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+      const vendorParam = url.searchParams.get('vendor')
+      const baseUrlParam = url.searchParams.get('base_url')
+      // 双职责：带 vendor/base_url 参数 = 帮面板探测上游的真实模型列表；
+      // 无参数 = 给 llm-pi-ai 的发布清单（虚拟 id + 矩阵全集）。
+      if (vendorParam !== null || baseUrlParam !== null) {
+        await handleModelDiscovery(res, vendorParam, baseUrlParam, url.searchParams.get('api_key'))
+        return
+      }
       const config = options.config()
       const ids = publishedModelIds(config)
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify({
         object: 'list',
-        data: ids.map((id) => ({ id, object: 'model', owned_by: id.startsWith('umbra:') ? 'umbra-budget' : 'upstream' })),
+        data: ids.map((id) => ({ id, object: 'model', owned_by: id.startsWith('steward:') ? 'token-steward' : 'upstream' })),
       }))
       return
     }
@@ -232,9 +244,9 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const router = options.router()
     const clock = now()
     const { intent, route } = inferIntent(body, modelId, clock)
-    const requestId = 'umb-' + randomBytes(8).toString('hex')
+    const requestId = 'stg-' + randomBytes(8).toString('hex')
 
-    // 虚拟 id 的显式意图优先于全局模式：umbra:max_power 就是「这次必须最强」。
+    // 虚拟 id 的显式意图优先于全局模式：steward:max_power 就是「这次必须最强」。
     if (route.mode !== undefined) router.setMode(route.mode)
 
     // ── 精确缓存：键含生效模式与流式形状，换模式/换形状天然失效 ──
@@ -255,8 +267,8 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       await runPlanned(res, config, router, planned, body, requestId, cacheKey)
       return
     }
-    if (route.virtual.startsWith('umbra:alias/')) {
-      const name = route.virtual.slice('umbra:alias/'.length)
+    if (route.virtual.startsWith('steward:alias/')) {
+      const name = route.virtual.slice('steward:alias/'.length)
       const alias = config.routing.aliases[name]
       if (alias === undefined) {
         writeError(res, 400, 'bad-request', 'unknown alias ' + JSON.stringify(name))
@@ -288,11 +300,87 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     await runPlanned(res, config, router, router.plan(intent, clock, requestId), body, requestId, cacheKey)
   }
 
+  /**
+   * 模型发现：向真实上游 GET /models（OpenAI 形状），把结果按目录注上
+   * Tier/名称后回给面板勾选。base_url / api_key 参数优先，其次 vendor
+   * 参数查 vendors.json。密钥只在本机内存里转一手，绝不写进响应。
+   */
+  async function handleModelDiscovery(res: ServerResponse, vendorId: string | null, baseUrlParam: string | null, keyParam: string | null): Promise<void> {
+    const vendors = options.vendors?.() ?? []
+    const vendor = vendorId !== null ? vendors.find((entry) => entry.vendorId === vendorId) : undefined
+    if (vendorId !== null && vendor === undefined) {
+      writeError(res, 400, 'bad-request', 'unknown vendor ' + JSON.stringify(vendorId))
+      return
+    }
+    const target = baseUrlParam ?? (vendor !== undefined && vendor.customUrl !== '' ? vendor.customUrl : vendor?.officialUrl ?? '')
+    const key = keyParam ?? vendor?.apiKey ?? ''
+    if (target === '' || key === '') {
+      writeError(res, 400, 'bad-request', 'discovery needs base_url and api_key (or a saved vendor with both)')
+      return
+    }
+    const endpoint = target.replace(/\/+$/, '') + '/models'
+    try {
+      const upstream = await fetchImpl(endpoint, {
+        method: 'GET',
+        headers: { authorization: 'Bearer ' + key },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!upstream.ok) {
+        writeError(res, 502, 'upstream-failed', 'upstream /models responded ' + String(upstream.status))
+        return
+      }
+      const body: unknown = await upstream.json()
+      const ids = extractModelIds(body)
+      if (ids === undefined) {
+        writeError(res, 502, 'upstream-failed', 'upstream /models body is not an OpenAI list')
+        return
+      }
+      const template = PROVIDER_TEMPLATES.find((entry) => entry.vendorId === (vendor?.vendorId ?? ''))
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(JSON.stringify({
+        object: 'list',
+        vendor: vendorId ?? '',
+        data: ids.map((id) => {
+          const known = template !== undefined ? matchTemplateModel(template, id) : undefined
+          return {
+            id,
+            object: 'model',
+            name: known?.name ?? id,
+            tier: known?.tier ?? 'NA',
+            inCatalog: known !== undefined,
+            owned_by: 'upstream',
+          }
+        }),
+      }))
+    } catch (error) {
+      writeError(res, 502, 'upstream-failed', 'model discovery failed: ' + messageOf(error))
+    }
+  }
+
+  /** OpenAI 形状 {data:[{id}]}（也容忍裸数组与 {models:[...]}）。 */
+  function extractModelIds(body: unknown): string[] | undefined {
+    const list = Array.isArray(body)
+      ? body
+      : body !== null && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)
+        ? (body as { data: unknown[] }).data
+        : body !== null && typeof body === 'object' && Array.isArray((body as { models?: unknown }).models)
+          ? (body as { models: unknown[] }).models
+          : undefined
+    if (list === undefined) return undefined
+    const ids: string[] = []
+    for (const entry of list) {
+      if (entry === null || typeof entry !== 'object') continue
+      const id = (entry as { id?: unknown }).id ?? (entry as { name?: unknown }).name
+      if (typeof id === 'string' && id !== '') ids.push(id)
+    }
+    return ids
+  }
+
   async function runPlanned(
     res: ServerResponse,
     config: PoolConfig,
-    router: UmbraRouter,
-    planned: ReturnType<UmbraRouter['plan']>,
+    router: StewardRouter,
+    planned: ReturnType<StewardRouter['plan']>,
     body: Record<string, unknown>,
     requestId: string,
     cacheKey?: string,

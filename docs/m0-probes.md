@@ -30,12 +30,12 @@ pi-ai 在 `compat.supportsUsageInStreaming !== false` 时会自动带 `stream_op
 ## T6 · 含冒号的虚拟模型 id —— **PASS**
 
 ```
-model  : "umbra:auto"   <-- 原样透传
+model  : "steward:auto"   <-- 原样透传
 ```
 
 依据链：pi-ai 只校验 `id.length === 0`、重复 id、以及未声明（`UNKNOWN_MODEL`），**没有任何字符集正则**
 （`dsh-llm-pi-ai/lib/index.js:685-687` / `:1875`）；请求体里 `model: model.id` 逐字发出（`openai-completions.js:572`）。
-所以 `umbra:auto` / `umbra:frugal` / `umbra:pin/<provider>/<model>` 这套命名**可以直接用**，无需退回下划线。
+所以 `steward:auto` / `steward:frugal` / `steward:pin/<provider>/<model>` 这套命名**可以直接用**，无需退回下划线。
 
 ## T4 · dsh-usage 台账结构 —— **PASS**
 
@@ -60,7 +60,7 @@ ctx.webServer.register(route)  // 返回 disposer
 ```
 
 `dsh-host-webserver` README 第 59-65 行确认：`register(route)` 支持 `exact`/`prefix`，返回解除注册的函数；重复 path 被拒。
-我们的 `api/umbra-budget/*` 直接照抄这个形状。
+我们的 `api/token-steward/*` 直接照抄这个形状。
 
 ## T1 · pi-ai profile 形状 —— **PASS（源码级）**
 
@@ -96,5 +96,5 @@ M4 的 `agent/request` 身份注入需要这些事实）：
 - P4：settings 服务面（方法名普查，决定能否编程注册 provider）。
 
 用法：装进 scratch profile，自动执行 4 次自调用（每次 ≤8 输出 token），
-读 `$DSH_HOME/umbra-probe/report.json`，然后移除。三种宿主语义
+读 `$DSH_HOME/steward-probe/report.json`，然后移除。三种宿主语义
 （可变 / 深冻结 / 静默克隆）都有判定矩阵，4 条契约测试覆盖探针自身逻辑。

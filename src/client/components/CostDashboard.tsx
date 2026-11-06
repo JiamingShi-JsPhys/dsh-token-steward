@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react'
 import type { MatrixSnapshot } from '../../core/types.ts'
 import { headline } from '../../core/panel-view.ts'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 成本看板的 props。 */
 export interface CostDashboardProps {

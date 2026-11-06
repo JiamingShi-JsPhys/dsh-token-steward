@@ -25,10 +25,10 @@ import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { createProbe } from '../index.js'
 
-const MARKER = '__UMBRA_PROBE__'
+const MARKER = '__STEWARD_PROBE__'
 const BASE_PROVIDER = 'deepseek'
 const BASE_MODEL = 'deepseek-chat'
-const BOGUS_PROVIDER = '__umbra_nonexistent_provider__'
+const BOGUS_PROVIDER = '__steward_nonexistent_provider__'
 
 // ----------------------------------------------------------------------
 // Fake harness pieces
@@ -203,8 +203,8 @@ const PROBE_CONFIG = {
 }
 
 async function runProbe({ waterfallMode, settings } = {}) {
-  const stateDir = mkdtempSync(join(tmpdir(), 'umbra-probe-'))
-  process.env.UMBRA_PROBE_STATE = stateDir
+  const stateDir = mkdtempSync(join(tmpdir(), 'steward-probe-'))
+  process.env.STEWARD_PROBE_STATE = stateDir
   const fakeUndici = makeFakeUndici()
   const ctx = makeCtx({ settings })
   const llm = makeFakeLlm(ctx, fakeUndici, { waterfallMode })
@@ -276,7 +276,7 @@ test('report file is written, parses, and carries the schema kind', async () => 
   const { stateDir } = await runProbe({ waterfallMode: 'mutable' })
   const raw = readFileSync(join(stateDir, 'report.json'), 'utf8')
   const parsed = JSON.parse(raw)
-  assert.equal(parsed.kind, 'umbra-rewrite-probe/1')
+  assert.equal(parsed.kind, 'token-steward-rewrite-probe/1')
   assert.ok(Array.isArray(parsed.waterfallShapes))
   assert.ok(parsed.waterfallShapes.length >= 4, 'a shape census entry exists for every probe call')
   assert.ok(typeof parsed.conclusion.rewriteBackend === 'string')

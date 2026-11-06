@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react'
 import type { ModelCardView } from '../../core/types.ts'
 import { modelCardFace } from '../../core/panel-view.ts'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 模型卡的 props。 */
 export interface ModelCardProps {
@@ -29,8 +29,20 @@ export function ModelCard(props: ModelCardProps): ReactNode {
     >
       <div className={css.cardHead}>
         <span className={css.cardName} title={face.provider + ' / ' + face.model}>{face.displayName}</span>
+        {props.card.tier !== undefined ? <span className={css.tierBadge}>[{props.card.tier}]</span> : null}
         <span className={css.statusDot} aria-hidden="true" />
       </div>
+
+      {props.card.dimensions !== undefined ? (
+        <div className={css.dimRow} data-dsh-part="dimensions">
+          <span className={css.dimBox}>R: {props.card.dimensions.reasoning.score}</span>
+          <span className={css.dimBox}>L: {props.card.dimensions.longContext.score}</span>
+          <span className={css.dimBox}>C: {props.card.dimensions.coding.score}</span>
+          <span className={css.dimBox}>A: {props.card.dimensions.agentic.score}</span>
+          <span className={css.dimBox}>P: {props.card.dimensions.proWork.score}</span>
+          <span className={css.dimBox}>F: {props.card.dimensions.factuality.score}</span>
+        </div>
+      ) : null}
 
       <div className={css.chips}>
         <span className={css.chip} data-part="cost-level">{face.costLevelLabel}</span>

@@ -83,8 +83,8 @@ artifacts    10   built-host-e2e 3   →  合计 345
 ### 实测
 
 真实起服务、真实 fetch 打它：401 / 400 / 502 / 流式透传 / 降级重试全部覆盖。
-`/v1/models` 返回 4 个虚拟 id + 矩阵全部模型，`umbra:max_power` 能把模式切到最强火力，
-`umbra:pin/cheap/cheap-1` 能直通。
+`/v1/models` 返回 4 个虚拟 id + 矩阵全部模型，`steward:max_power` 能把模式切到最强火力，
+`steward:pin/cheap/cheap-1` 能直通。
 
 ---
 
@@ -99,8 +99,8 @@ artifacts    10   built-host-e2e 3   →  合计 345
 
 ### 组件
 
-`UmbraBall` / `UmbraPanel` / `ModeSwitch` / `SegmentGroup` / `CostDashboard` /
-`ModelCard` / `ModelGrid` / `RouteMonitor` / `AgentLanes` / `UmbraSettings`。
+`StewardBall` / `StewardPanel` / `ModeSwitch` / `SegmentGroup` / `CostDashboard` /
+`ModelCard` / `ModelGrid` / `RouteMonitor` / `AgentLanes` / `SettingsPanel`。
 
 两个席位：
 - `shell.overlay`（官方 ui-layout 声明的 root 列表席位，已从 asar 里核实存在）；

@@ -34,7 +34,7 @@ const POOL_YAML = [
   '  - provider_name: cheap',
   '    endpoint: https://cheap.example/v1',
   '    api: openai-completions',
-  '    api_key: env:UMBRA_TEST_KEY',
+  '    api_key: env:STEWARD_TEST_KEY',
   '    models:',
   '      - id: cheap-1',
   '        capabilities: [fast, coding]',
@@ -46,7 +46,7 @@ const POOL_YAML = [
   '  - provider_name: strong',
   '    endpoint: https://strong.example/v1',
   '    api: openai-completions',
-  '    api_key: env:UMBRA_TEST_KEY',
+  '    api_key: env:STEWARD_TEST_KEY',
   '    models:',
   '      - id: strong-1',
   '        capabilities: [coding, reasoning, tool-use]',
@@ -57,18 +57,18 @@ const POOL_YAML = [
 ].join('\n')
 
 test('打包后的 Host 半区能挂载、起网关、注册面板路由', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'umbra-built-'))
+  const home = await mkdtemp(join(tmpdir(), 'steward-built-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
-  process.env.UMBRA_TEST_KEY = 'sk-test-000'
+  process.env.STEWARD_TEST_KEY = 'sk-test-000'
 
   const routes: Array<{ path: string, handler: (req: never, res: never) => void }> = []
   const logs: string[] = []
   let teardown: (() => void) | undefined
 
   try {
-    await mkdir(join(home, 'umbra-budget'), { recursive: true })
-    await writeFile(join(home, 'umbra-budget', 'model_pool.yaml'), POOL_YAML)
+    await mkdir(join(home, 'token-steward'), { recursive: true })
+    await writeFile(join(home, 'token-steward', 'model_pool.yaml'), POOL_YAML)
 
     const host = await loadHost()
     assert.equal(typeof host.apply, 'function')
@@ -92,7 +92,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     }, {})
 
     // 网关状态文件必须真的写出来，且带端口与令牌。
-    const statePath = join(home, 'umbra-budget', 'gateway.json')
+    const statePath = join(home, 'token-steward', 'gateway.json')
     const state = JSON.parse(await readFile(statePath, 'utf8')) as {
       baseUrl: string
       token: string
@@ -105,7 +105,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     assert.ok(state.token.length >= 40)
     assert.deepEqual(
       state.modelIds.slice(0, 4),
-      ['umbra:auto', 'umbra:frugal', 'umbra:efficiency', 'umbra:max_power'],
+      ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power'],
     )
     assert.ok(state.modelIds.includes('cheap-1'))
     assert.ok(state.modelIds.includes('strong-1'))
@@ -119,14 +119,15 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     })
     assert.equal(models.status, 200)
     const list = await models.json() as { data: Array<{ id: string }> }
-    assert.ok(list.data.some((entry) => entry.id === 'umbra:auto'))
+    assert.ok(list.data.some((entry) => entry.id === 'steward:auto'))
 
     // 四条面板路由都注册了。
     assert.deepEqual(routes.map((route) => route.path).sort(), [
-      '/api/umbra-budget/gateway',
-      '/api/umbra-budget/mode',
-      '/api/umbra-budget/reload',
-      '/api/umbra-budget/snapshot',
+      '/api/token-steward/gateway',
+      '/api/token-steward/mode',
+      '/api/token-steward/reload',
+      '/api/token-steward/snapshot',
+      '/api/token-steward/vendors',
     ])
 
     // 用一个真 HTTP 服务承载这些路由，验证快照内容。
@@ -147,7 +148,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     })
 
     try {
-      const base = 'http://127.0.0.1:' + String(port) + '/api/umbra-budget'
+      const base = 'http://127.0.0.1:' + String(port) + '/api/token-steward'
       const snapshot = await fetch(base + '/snapshot')
       assert.equal(snapshot.status, 200)
       const body = await snapshot.json() as {
@@ -173,7 +174,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
       assert.equal(mode.status, 200)
 
       // 模式要写回配置文件，重启后仍生效。
-      const persisted = await readFile(join(home, 'umbra-budget', 'model_pool.yaml'), 'utf8')
+      const persisted = await readFile(join(home, 'token-steward', 'model_pool.yaml'), 'utf8')
       assert.match(persisted, /mode: max_power/)
 
       const reload = await fetch(base + '/reload', { method: 'POST' })
@@ -195,19 +196,19 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
-    delete process.env.UMBRA_TEST_KEY
+    delete process.env.STEWARD_TEST_KEY
     await rm(home, { recursive: true, force: true })
   }
 });
 
 test('打包后的 Host 半区在配置损坏时不挂网关，但也不抛错', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'umbra-built-bad-'))
+  const home = await mkdtemp(join(tmpdir(), 'steward-built-bad-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
 
   try {
-    await mkdir(join(home, 'umbra-budget'), { recursive: true })
-    await writeFile(join(home, 'umbra-budget', 'model_pool.yaml'), 'version: 1\nproviders: []\n')
+    await mkdir(join(home, 'token-steward'), { recursive: true })
+    await writeFile(join(home, 'token-steward', 'model_pool.yaml'), 'version: 1\nproviders: []\n')
 
     const routes: Array<{ path: string }> = []
     const warnings: string[] = []
@@ -223,8 +224,8 @@ test('打包后的 Host 半区在配置损坏时不挂网关，但也不抛错',
     }, {})
 
     // 配置非法 → 面板仍注册（好让用户看到红条），但没有网关状态文件。
-    assert.equal(routes.length, 4)
-    await assert.rejects(() => readFile(join(home, 'umbra-budget', 'gateway.json'), 'utf8'))
+    assert.equal(routes.length, 5)
+    await assert.rejects(() => readFile(join(home, 'token-steward', 'gateway.json'), 'utf8'))
     assert.ok(warnings.some((line) => line.includes('no usable model pool')))
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME
@@ -233,16 +234,16 @@ test('打包后的 Host 半区在配置损坏时不挂网关，但也不抛错',
   }
 });
 test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（计量不冻结）', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'umbra-live-usage-'))
+  const home = await mkdtemp(join(tmpdir(), 'steward-live-usage-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
-  process.env.UMBRA_LIVE_KEY = 'sk-live'
+  process.env.STEWARD_LIVE_KEY = 'sk-live'
 
   const routes: Array<{ path: string, handler: (req: never, res: never) => void }> = []
   let teardown: (() => void) | undefined
   try {
-    await mkdir(join(home, 'umbra-budget'), { recursive: true })
-    await writeFile(join(home, 'umbra-budget', 'model_pool.yaml'), POOL_YAML)
+    await mkdir(join(home, 'token-steward'), { recursive: true })
+    await writeFile(join(home, 'token-steward', 'model_pool.yaml'), POOL_YAML)
 
     const host = await loadHost()
     await (host.apply as (ctx: unknown, config?: unknown) => Promise<void>)({
@@ -268,7 +269,7 @@ test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（
     })
 
     try {
-      const base = 'http://127.0.0.1:' + String(port) + '/api/umbra-budget'
+      const base = 'http://127.0.0.1:' + String(port) + '/api/token-steward'
       const before = await (await fetch(base + '/snapshot')).json() as {
         snapshot: { usageAvailable: boolean, totals: { todayTokens: number } }
       }
@@ -306,7 +307,7 @@ test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（
     await new Promise((resolve) => setTimeout(resolve, 100))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
-    delete process.env.UMBRA_LIVE_KEY
+    delete process.env.STEWARD_LIVE_KEY
     await rm(home, { recursive: true, force: true })
   }
 });

@@ -6,7 +6,7 @@
  * 用 ResizeObserver 重测，因此语言切换、字体加载、容器变宽都能跟上。
  */
 import { Children, useLayoutEffect, useRef, type HTMLAttributes, type ReactNode } from 'react'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 已放置高亮的标记属性。 */
 const PILL_ATTR = 'data-pill'

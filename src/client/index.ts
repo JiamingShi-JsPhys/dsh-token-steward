@@ -1,5 +1,5 @@
 /**
- * dsh-umbra-budget · Client 半区。
+ * dsh-token-steward · Client 半区。
  *
  * 注册两个席位，都被 ctx.effect 完整回收：
  *  - `shell.overlay`（官方 ui-layout 声明的 root 列表席位）：悬浮球 + 展开面板；
@@ -21,11 +21,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { createPanelClient } from './api.ts'
 import { createPanelStore, type PanelStore } from './store.ts'
 import { NS, en, zh } from './locales.ts'
-import { UmbraBall } from './components/UmbraBall.tsx'
-import { UmbraPanel } from './components/UmbraPanel.tsx'
-import { UmbraSettings } from './settings/UmbraSettings.tsx'
+import { StewardBall } from './components/StewardBall.tsx'
+import { StewardPanel } from './components/StewardPanel.tsx'
+import { SettingsPanel } from './settings/SettingsPanel.tsx'
 
-export const name = '@linxin666/dsh-client-ui-umbra-budget'
+export const name = 'dsh-token-steward'
 
 /** 必需服务：席位注册表与本地化（都来自渲染器与 locale 插件的 Context 合并）。 */
 export const inject = ['slots', 'locale'] as const
@@ -35,7 +35,7 @@ export const OVERLAY_SEAT = 'shell.overlay'
 export const SETTINGS_SEAT = 'settings.section'
 
 /** 设置页在该席位里的 id（设置导航据此定位）。 */
-export const SETTINGS_SECTION_ID = 'umbra-budget'
+export const SETTINGS_SECTION_ID = 'token-steward'
 
 /** 设置导航里的排序权重；dsh-usage 占 100，这里排在它之后。 */
 export const SETTINGS_SECTION_ORDER = 140
@@ -46,7 +46,7 @@ const TICK_MS = 1_000
 /** 应用。 */
 export function apply(ctx: ClientContext): void {
   // 与全家桶一致：register 一次，bind 拿到该命名空间的取词函数。
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'umbra: locale')
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'steward: locale')
   const translate = (key: string): string => {
     try {
       return ctx.locale.bind(NS)(key)
@@ -71,8 +71,8 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
 
     function render(): ReactElement {
       const state = store.getState()
-      return createElement('div', { 'data-dsh-plugin': 'umbra-budget' },
-        createElement(UmbraBall, {
+      return createElement('div', { 'data-dsh-plugin': 'token-steward' },
+        createElement(StewardBall, {
           snapshot: state.snapshot,
           open: state.open,
           t: translate,
@@ -80,7 +80,7 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
           onCycleMode: (mode) => { void store.setMode(mode) },
         }),
         state.open
-          ? createElement(UmbraPanel, { state, store, t: translate, now, onClose: () => { store.setOpen(false) } })
+          ? createElement(StewardPanel, { state, store, t: translate, now, onClose: () => { store.setOpen(false) } })
           : null,
       ) as ReactElement
     }
@@ -108,7 +108,7 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
 
     return ctx.slots.inject(OVERLAY_SEAT, () => {
       container = document.createElement('div')
-      container.setAttribute('data-dsh-umbra-root', '')
+      container.setAttribute('data-dsh-steward-root', '')
       document.body.appendChild(container)
       root = createRoot(container)
       const unsubscribe = store.subscribe(draw)
@@ -130,7 +130,7 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
         container = undefined
       }
     })
-  }, 'umbra: overlay entry')
+  }, 'steward: overlay entry')
 }
 
 /** 设置页：低频界面，打开时才拉数据。 */
@@ -138,16 +138,20 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
   ctx.effect(() => {
     const store: PanelStore = createPanelStore(createPanelClient())
     store.start()
+    void store.refreshVendors()
 
     function SettingsSection(): ReactElement {
       const state = store.getState()
-      return createElement(UmbraSettings, {
+      return createElement(SettingsPanel, {
         snapshot: state.snapshot,
         gateway: state.gateway,
         poolPath: state.snapshot?.pool.source ?? 'model_pool.yaml',
         retainDays: 180,
+        vendors: state.vendors,
         onReload: () => { void store.reload() },
         onSelectMode: (mode) => { void store.setMode(mode) },
+        onSaveVendors: (vendors) => { void store.saveVendors(state.vendors?.mode ?? 'frugal', vendors) },
+        onDiscover: (params) => store.discoverModels(params),
         t: translate,
       }) as ReactElement
     }
@@ -165,5 +169,5 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
       dispose()
       store.stop()
     }
-  }, 'umbra: settings section')
+  }, 'steward: settings section')
 }

@@ -68,7 +68,7 @@ export interface RouteLedgerStore {
 
 /**
  * 建一个台账存储。
- * @param directory - $DSH_HOME/umbra-budget 目录。
+ * @param directory - $DSH_HOME/token-steward 目录。
  * @param clock - 可注入时钟。
  * @param retainDays - 保留天数。
  */

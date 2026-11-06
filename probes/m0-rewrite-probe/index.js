@@ -1,5 +1,5 @@
 /**
- * `dsh-umbra-rewrite-probe` — M0 capability probe for the umbra-budget model matrix.
+ * `dsh-token-steward-rewrite-probe` — M0 capability probe for the token-steward model matrix.
  *
  * Answers, against the REAL running harness:
  *
@@ -21,16 +21,16 @@
  * traffic passes through untouched. Every step is failure-isolated; a probe crash
  * writes a partial report and never affects the harness.
  *
- * Report: `$DSH_HOME/umbra-probe/report.json` (the Desktop host captures no stdout).
+ * Report: `$DSH_HOME/steward-probe/report.json` (the Desktop host captures no stdout).
  *
- * @module dsh-umbra-rewrite-probe
+ * @module dsh-token-steward-rewrite-probe
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-export const name = 'umbra-rewrite-probe'
+export const name = 'token-steward-rewrite-probe'
 export const inject = ['llm']
 
 /**
@@ -38,16 +38,16 @@ export const inject = ['llm']
  * production resolves the real one dynamically inside `apply`.
  */
 export function createProbe({ ctx, llm, config = {}, undici }) {
-  const log = ctx.logger('umbra-probe')
+  const log = ctx.logger('steward-probe')
   const als = new AsyncLocalStorage()
   const marker = typeof config.marker === 'string' && config.marker !== '' ? config.marker : '__UMBRA_PROBE__'
   const baseProvider = config.provider ?? 'deepseek'
   const baseModel = config.model ?? 'deepseek-chat'
-  const bogusProvider = config.probeProvider ?? '__umbra_nonexistent_provider__'
+  const bogusProvider = config.probeProvider ?? '__steward_nonexistent_provider__'
   const timeoutMs = Number(config.timeoutMs) > 0 ? Number(config.timeoutMs) : 30_000
 
   const report = {
-    kind: 'umbra-rewrite-probe/1',
+    kind: 'token-steward-rewrite-probe/1',
     startedAt: new Date().toISOString(),
     pid: process.pid,
     node: process.version,
@@ -496,7 +496,7 @@ function authFingerprintOf(headers) {
 
 export function reportDir() {
   const home = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME !== '' ? process.env.DSH_HOME : join(homedir(), '.dsh')
-  return process.env.UMBRA_PROBE_STATE ?? join(home, 'umbra-probe')
+  return process.env.STEWARD_PROBE_STATE ?? join(home, 'steward-probe')
 }
 
 function writeReport(report) {
@@ -513,7 +513,7 @@ function writeReport(report) {
  * Cordis apply — wire the probe to the live services and run once.
  */
 export async function apply(ctx, config) {
-  const log = ctx.logger('umbra-probe')
+  const log = ctx.logger('steward-probe')
   let probe = null
   ctx.inject(['llm'], async (scope) => {
     const llm = scope.get('llm')
@@ -528,7 +528,7 @@ export async function apply(ctx, config) {
   })
   ctx.effect(() => () => {
     probe?.dispose()
-    log.info('umbra-rewrite-probe disposed')
+    log.info('token-steward-rewrite-probe disposed')
   })
 }
 

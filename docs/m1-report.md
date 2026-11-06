@@ -119,7 +119,7 @@ chosen 失败 → 记进 history → 换 fallback → fallback 失败(final) →
 
 M1 的出口是四个纯函数模块，M2 要接的是它们外围的 IO：
 
-- `pool-file.ts`：读 `$DSH_HOME/umbra-budget/model_pool.yaml`（用宿主自带的 `yaml`，M0 已证存在），失败即整份保留旧配置；
+- `pool-file.ts`：读 `$DSH_HOME/token-steward/model_pool.yaml`（用宿主自带的 `yaml`，M0 已证存在），失败即整份保留旧配置；
 - 原子写：临时文件 + `rename`，写入前校验，写完才替换引用；
 - `fs.watch` 热重载 + 去抖；
 - 路由台账（路由事件之外的持久化部分）同样走原子写。

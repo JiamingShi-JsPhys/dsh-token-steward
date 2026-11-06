@@ -1,4 +1,4 @@
-# dsh-umbra-budget · Client 端 UI 组件拆分计划
+# dsh-token-steward · Client 端 UI 组件拆分计划
 
 > 标杆：本机已安装的 `@linxin666` 全家桶（v0.4.12）。下文每条结论都标注了它的出处文件。
 
@@ -22,16 +22,16 @@
 ```
 src/client/
   index.ts                  apply(ctx)：locale.register + 三处注册（overlay / settings.section / footer.action）+ ctx.effect 清理
-  api.ts                    同源 JSON 客户端：api/umbra-budget/{snapshot,mode,pool,route-log}
+  api.ts                    同源 JSON 客户端：api/token-steward/{snapshot,mode,pool,route-log}
   ui-store.ts               useSyncExternalStore 快照仓库（revision 单调、乱序丢弃、可见性门控轮询）
   locales.ts                zh 为键源，en 全量对照
   css-modules.d.ts          *.module.css 的 ambient 声明（照 family 原样）
 
   components/
-    UmbraBall.tsx           悬浮球（48px）：模式色环 + 今日成本角标；拖拽持久化、点击展开、长按切模式
-    UmbraBall.module.css
-    UmbraPanel.tsx          展开式大面板：锚定球体、四页签、Esc 关闭、焦点陷阱、减少动效降级
-    UmbraPanel.module.css
+    StewardBall.tsx           悬浮球（48px）：模式色环 + 今日成本角标；拖拽持久化、点击展开、长按切模式
+    StewardBall.module.css
+    StewardPanel.tsx          展开式大面板：锚定球体、四页签、Esc 关闭、焦点陷阱、减少动效降级
+    StewardPanel.module.css
     ModeSwitch.tsx          三档模式条（复用 SegmentGroup 的滑动药丸，极致便宜 / 效率优先 / 最强火力）
     CostDashboard.tsx       成本看板头：今日 token、预估成本、缓存命中率、降级次数 + 24h 迷你趋势
     CostDashboard.module.css
@@ -43,7 +43,7 @@ src/client/
     HealthLegend.tsx        状态图例 + 熔断倒计时（active / cooling / half-open / open / offline）
 
   settings/
-    UmbraSettingsCard.tsx   settings.section 页：YAML 路径、校验结果、网关端口与令牌复制、默认模式、启用开关
+    SettingsPanelCard.tsx   settings.section 页：YAML 路径、校验结果、网关端口与令牌复制、默认模式、启用开关
     PluginSettingsCard.tsx  ┐
     SegmentGroup.tsx        ├ 与 family 同款三件套（按 sync-shared 规则同步，不手改副本）
     RangeBubble.tsx         ┘
@@ -65,14 +65,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export function apply(ctx: ClientContext): void {
   // 1) 悬浮球：root 作用域的列表席位，与 pet / wallpaperPicker 可共存
   ctx.effect(() => ctx.slots.inject('shell.overlay', () =>
-    ctx.slots.register({ name: 'shell.overlay', id: 'umbraBall' }, UmbraBall)), 'umbra: ball')
+    ctx.slots.register({ name: 'shell.overlay', id: 'stewardBall' }, StewardBall)), 'steward: ball')
 
   // 2) 设置页：family 的 settings.section 席位（无 web-ui 家族时是独立一级页）
-  ctx.effect(() => installWebExtensionPage(ctx, { key: 'dsh-umbra-budget', order: 152, ... }), 'umbra: settings')
+  ctx.effect(() => installWebExtensionPage(ctx, { key: 'dsh-token-steward', order: 152, ... }), 'steward: settings')
 
   // 3) 侧栏底部快捷开关（可选，二期）
   ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () =>
-    ctx.slots.register({ name: 'sidebar.footer.action', id: 'umbraBudget', locale: NS }, UmbraFooterEntry)), 'umbra: footer')
+    ctx.slots.register({ name: 'sidebar.footer.action', id: 'stewardBudget', locale: NS }, StewardFooterEntry)), 'steward: footer')
 }
 ```
 
@@ -80,7 +80,7 @@ export function apply(ctx: ClientContext): void {
 
 - **只用 `--dsw-alias-*`**，不写死颜色；深浅色主题各一套（`body[data-ds-dark-theme]`）。
 - 主按钮填充用 `--dsw-alias-button-primary-fill` + `--dsw-alias-label-primary-foreground` 三件套，禁用 `--dsw-alias-brand-primary` 作填充（官方面板会黑底黑字）。
-- 语义属性：根容器 `data-dsh-plugin="umbra-budget"`，部件 `data-dsh-part="ball" | "panel" | "model-card" | "route-row"`，状态 `data-state`，与 `semantic-attrs-v1` 对齐，皮肤可覆盖。
+- 语义属性：根容器 `data-dsh-plugin="token-steward"`，部件 `data-dsh-part="ball" | "panel" | "model-card" | "route-row"`，状态 `data-state`，与 `semantic-attrs-v1` 对齐，皮肤可覆盖。
 - 极客感来自数据本身：状态点脉冲、延迟条、降级红箭头；动效全部受 `prefers-reduced-motion` 降级为淡入。
 - **轮询纪律**：球常驻但只 10s 轻量取 `totals`；面板关闭即停；页面不可见即停（照 `UsageFootCard` 的可见性门控）。
 

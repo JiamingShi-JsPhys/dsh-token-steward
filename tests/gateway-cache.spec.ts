@@ -84,7 +84,7 @@ function post(gateway: Gateway, body: unknown): Promise<Response> {
 }
 
 function chatPrompt(content: string): Record<string, unknown> {
-  return { model: 'umbra:auto', messages: [{ role: 'user', content }] }
+  return { model: 'steward:auto', messages: [{ role: 'user', content }] }
 }
 
 test('同一 prompt 的第二次请求命中缓存：不出站、响应逐字节一致', async () => {
@@ -159,7 +159,7 @@ test('流式与非流式形状互不串答案', async () => {
   }, { exactMatch: true, streamAware: true })
 })
 
-test('模式切换使 umbra:auto 的缓存失效', async () => {
+test('模式切换使 steward:auto 的缓存失效', async () => {
   await withGateway(async (gateway, calls) => {
     await post(gateway, chatPrompt('same prompt'))
     assert.equal(calls.length, 1)

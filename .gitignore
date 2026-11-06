@@ -2,3 +2,6 @@ node_modules/
 .cache/
 lib/
 *.log
+_ref/
+_archive/
+.cache/

@@ -1,4 +1,4 @@
-# dsh-umbra-budget bundle patch：把本插件插进 web 插件名册。
+# dsh-token-steward bundle patch：把本插件插进 web 插件名册。
 #
 # 一行同时挂载两个半区（与 @linxin666 全家桶同构）：
 #   - Host 半区 lib/index.js：读模型矩阵、起本地网关、注册面板 HTTP 路由；
@@ -8,13 +8,13 @@
 # name 必须等于包名：dsh-client-modules 按 loader 行的 name 定位 package.json，
 # 找不到包就没有 client 半区（面板不会出现，但网关照常工作）。
 - insert:
-    - id: umbra-budget
-      name: dsh-umbra-budget
+    - id: token-steward
+      name: dsh-token-steward
       config:
         # 关掉就完全不挂载：网关不起、面板不出现、路由不注册。
         enabled: true
-        # 留空则用 $DSH_HOME/umbra-budget/model_pool.yaml。
-        # poolPath: 'C:/Users/you/.dsh/umbra-budget/model_pool.yaml'
+        # 留空则用 $DSH_HOME/token-steward/model_pool.yaml。
+        # poolPath: 'C:/Users/you/.dsh/token-steward/model_pool.yaml'
         # 路由台账保留天数（route-ledger.json 按这个抽稀）。
         retainDays: 180
         # 面板读取 dsh-usage 台账的间隔（毫秒，最小 2000）。

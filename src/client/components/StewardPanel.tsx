@@ -16,10 +16,10 @@ import { CostDashboard } from './CostDashboard.tsx'
 import { ModeSwitch } from './ModeSwitch.tsx'
 import { ModelGrid } from './ModelGrid.tsx'
 import { RouteMonitor } from './RouteMonitor.tsx'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 面板的 props。 */
-export interface UmbraPanelProps {
+export interface StewardPanelProps {
   state: PanelState
   store: PanelStore
   t(key: string): string
@@ -29,7 +29,7 @@ export interface UmbraPanelProps {
 }
 
 /** 大面板。 */
-export function UmbraPanel(props: UmbraPanelProps): ReactNode {
+export function StewardPanel(props: StewardPanelProps): ReactNode {
   const snap = props.state.snapshot
   const banner = snap === undefined ? undefined : bannerOf(snap)
   const root = useRef<HTMLDivElement | null>(null)
@@ -77,7 +77,7 @@ export function UmbraPanel(props: UmbraPanelProps): ReactNode {
       role="dialog"
       aria-modal="false"
       aria-label={props.t('panel.title')}
-      data-dsh-plugin="umbra-budget"
+      data-dsh-plugin="token-steward"
       data-dsh-part="panel"
       data-mode={snap?.mode ?? 'frugal'}
     >

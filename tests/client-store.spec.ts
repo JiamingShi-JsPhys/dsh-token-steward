@@ -108,6 +108,15 @@ function fakeClient(): {
       async gateway() {
         return undefined
       },
+      async vendors() {
+        return { mode: 'frugal' as const, vendors: [], catalog: [] }
+      },
+      async saveVendors() {
+        return { ok: true }
+      },
+      async discoverModels() {
+        return { data: [] }
+      },
     },
   }
 }
@@ -185,7 +194,7 @@ test('setMode 被拒绝时回滚并报错', async () => {
   await store.refresh()
 
   fake.next.setMode = async () => false
-  await store.setMode('efficiency')
+  await store.setMode('balanced')
 
   assert.equal(store.getState().snapshot?.mode, 'frugal', '被拒绝时必须回滚')
   assert.ok((store.getState().error ?? '').includes('拒绝'))

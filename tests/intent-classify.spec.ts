@@ -19,26 +19,26 @@ import { bodyText, classifyFailure, errorMessageOf, worthRetrying } from '../src
 
 /* ────────────────────────── 虚拟模型 id ────────────────────────── */
 
-test('umbra:auto 不固定模式', () => {
-  assert.deepEqual(parseVirtualModel('umbra:auto'), { virtual: 'umbra:auto' })
+test('steward:auto 不固定模式', () => {
+  assert.deepEqual(parseVirtualModel('steward:auto'), { virtual: 'steward:auto' })
 })
 
 test('三个模式虚拟 id 各自固定一个模式', () => {
-  assert.deepEqual(parseVirtualModel('umbra:frugal'), { virtual: 'umbra:frugal', mode: 'frugal' })
-  assert.deepEqual(parseVirtualModel('umbra:efficiency'), { virtual: 'umbra:efficiency', mode: 'efficiency' })
-  assert.deepEqual(parseVirtualModel('umbra:max_power'), { virtual: 'umbra:max_power', mode: 'max_power' })
+  assert.deepEqual(parseVirtualModel('steward:frugal'), { virtual: 'steward:frugal', mode: 'frugal' })
+  assert.deepEqual(parseVirtualModel('steward:balanced'), { virtual: 'steward:balanced', mode: 'balanced' })
+  assert.deepEqual(parseVirtualModel('steward:max_power'), { virtual: 'steward:max_power', mode: 'max_power' })
 })
 
-test('umbra:pin/<provider>/<model> 解析出直通目标', () => {
-  assert.deepEqual(parseVirtualModel('umbra:pin/agnes/agnes-3.0-flash'), {
-    virtual: 'umbra:pin/agnes/agnes-3.0-flash',
+test('steward:pin/<provider>/<model> 解析出直通目标', () => {
+  assert.deepEqual(parseVirtualModel('steward:pin/agnes/agnes-3.0-flash'), {
+    virtual: 'steward:pin/agnes/agnes-3.0-flash',
     pin: { provider: 'agnes', model: 'agnes-3.0-flash' },
   })
 })
 
 test('残缺的 pin 不抛出，只是不给出目标', () => {
-  assert.deepEqual(parseVirtualModel('umbra:pin/agnes'), { virtual: 'umbra:pin/agnes' })
-  assert.deepEqual(parseVirtualModel('umbra:pin//'), { virtual: 'umbra:pin//' })
+  assert.deepEqual(parseVirtualModel('steward:pin/agnes'), { virtual: 'steward:pin/agnes' })
+  assert.deepEqual(parseVirtualModel('steward:pin//'), { virtual: 'steward:pin//' })
 })
 
 test('非虚拟 id 返回空 virtual，交给网关按名字查表', () => {
@@ -46,8 +46,8 @@ test('非虚拟 id 返回空 virtual，交给网关按名字查表', () => {
   assert.deepEqual(parseVirtualModel('deepseek-flash'), { virtual: '' })
 })
 
-test('未知的 umbra: 前缀仍被识别为虚拟 id', () => {
-  assert.equal(parseVirtualModel('umbra:alias/analysis').virtual, 'umbra:alias/analysis')
+test('未知的 steward: 前缀仍被识别为虚拟 id', () => {
+  assert.equal(parseVirtualModel('steward:alias/analysis').virtual, 'steward:alias/analysis')
 })
 
 /* ────────────────────────── 内容提取 ────────────────────────── */
@@ -103,13 +103,13 @@ test('estimateOutputTokens 优先用显式上限，否则回落到 4096', () => 
 /* ────────────────────────── 意图推断 ────────────────────────── */
 
 test('带 tools 的请求隐式要求 tool-use', () => {
-  const { intent } = inferIntent({ tools: [{ type: 'function' }], messages: [] }, 'umbra:auto', 0)
+  const { intent } = inferIntent({ tools: [{ type: 'function' }], messages: [] }, 'steward:auto', 0)
   assert.equal(intent.needsTools, true)
   assert.ok(intent.requiredCapabilities.includes('tool-use'))
 })
 
 test('没有 tools 的请求不要求 tool-use', () => {
-  const { intent } = inferIntent({ messages: [] }, 'umbra:auto', 0)
+  const { intent } = inferIntent({ messages: [] }, 'steward:auto', 0)
   assert.equal(intent.needsTools, false)
   assert.equal(intent.requiredCapabilities.includes('tool-use'), false)
 })
@@ -117,24 +117,24 @@ test('没有 tools 的请求不要求 tool-use', () => {
 test('含图片的请求要求 vision 与 image 模态', () => {
   const { intent } = inferIntent({
     messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'x' } }] }],
-  }, 'umbra:auto', 0)
+  }, 'steward:auto', 0)
   assert.ok(intent.requiredCapabilities.includes('vision'))
   assert.deepEqual(intent.requiredModalities, ['text', 'image'])
 })
 
 test('response_format 存在时要求 json-mode', () => {
-  const { intent } = inferIntent({ messages: [], response_format: { type: 'json_object' } }, 'umbra:auto', 0)
+  const { intent } = inferIntent({ messages: [], response_format: { type: 'json_object' } }, 'steward:auto', 0)
   assert.ok(intent.requiredCapabilities.includes('json-mode'))
 })
 
 test('stream 标志被如实带出', () => {
-  assert.equal(inferIntent({ messages: [], stream: true }, 'umbra:auto', 0).intent.stream, true)
-  assert.equal(inferIntent({ messages: [] }, 'umbra:auto', 0).intent.stream, false)
+  assert.equal(inferIntent({ messages: [], stream: true }, 'steward:auto', 0).intent.stream, true)
+  assert.equal(inferIntent({ messages: [] }, 'steward:auto', 0).intent.stream, false)
 })
 
 test('虚拟 id 被写进 aliasName，供面板解释「为什么选它」', () => {
-  const { intent } = inferIntent({ messages: [] }, 'umbra:max_power', 0)
-  assert.equal(intent.aliasName, 'umbra:max_power')
+  const { intent } = inferIntent({ messages: [] }, 'steward:max_power', 0)
+  assert.equal(intent.aliasName, 'steward:max_power')
 })
 
 test('普通模型 id 不写 aliasName', () => {

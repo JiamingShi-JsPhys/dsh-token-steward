@@ -24,6 +24,11 @@ export function model(overrides: Partial<ModelEntry> & Pick<ModelEntry, 'id'>): 
     ...(overrides.proxy_url === undefined ? {} : { proxy_url: overrides.proxy_url }),
     ...(overrides.rpm === undefined ? {} : { rpm: overrides.rpm }),
     ...(overrides.pricing === undefined ? {} : { pricing: overrides.pricing }),
+    ...(overrides.tier === undefined ? {} : { tier: overrides.tier }),
+    ...(overrides.overall === undefined ? {} : { overall: overrides.overall }),
+    ...(overrides.dimensions === undefined ? {} : { dimensions: overrides.dimensions }),
+    ...(overrides.costPer1kInput === undefined ? {} : { costPer1kInput: overrides.costPer1kInput }),
+    ...(overrides.costPer1kOutput === undefined ? {} : { costPer1kOutput: overrides.costPer1kOutput }),
   }
 }
 
@@ -100,6 +105,7 @@ export function intent(overrides: Partial<RouteIntent> = {}): RouteIntent {
     estimatedInputTokens: overrides.estimatedInputTokens ?? 1_000,
     expectedOutputTokens: overrides.expectedOutputTokens ?? 1_000,
     needsTools: overrides.needsTools ?? false,
+    dimension: overrides.dimension ?? 'reasoning',
     stream: overrides.stream ?? true,
     burstKey: overrides.burstKey ?? 'burst-0',
     ...(overrides.aliasName === undefined ? {} : { aliasName: overrides.aliasName }),

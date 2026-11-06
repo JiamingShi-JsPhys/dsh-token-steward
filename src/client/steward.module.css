@@ -323,11 +323,16 @@
 }
 
 .chip {
+  /* 冷峻科技感：大写纯文字 + 1px 实线边框 + 透明背景 + 等宽字体（无 Emoji）。 */
   padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-3, rgb(0 0 0 / 6%));
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 5px;
+  background: transparent;
   color: var(--dsw-alias-label-secondary, #555);
   font-size: 10px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .chip[data-unpriced='true'] {
@@ -524,4 +529,159 @@
   font-size: 11px;
   line-height: 1.5;
   color: var(--dsw-alias-label-tertiary, #888);
+}
+
+
+/* ── 厂家配置区（settings）──────────────────────────────────────── */
+
+.vendorTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vendorTab {
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.vendorTab:hover { border-color: var(--dsw-alias-brand-primary, #4d6bfe); }
+
+.vendorTab[data-active='true'] {
+  background: var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #4d6bfe));
+  border-color: transparent;
+  color: var(--dsw-alias-label-primary-foreground, #ffffff);
+}
+
+.vendorField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vendorInput {
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+}
+
+.vendorInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary, #4d6bfe);
+}
+
+.vendorWarning {
+  padding: 8px 12px;
+  border: 1px solid rgba(229, 72, 77, 0.55);
+  border-radius: 8px;
+  background: color-mix(in srgb, #e5484d 16%, transparent);
+  color: #ff8f8f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.vendorActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vendorButton {
+  padding: 5px 14px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.vendorButton[data-tone='primary'] {
+  background: var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #4d6bfe));
+  border-color: transparent;
+  color: var(--dsw-alias-label-primary-foreground, #ffffff);
+}
+
+.vendorButton:disabled { opacity: 0.5; cursor: default; }
+
+.vendorNotice { font-size: 11.5px; opacity: 0.75; }
+
+.modelCheckList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  padding: 6px;
+}
+
+.modelCheckRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.modelCheckRow:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 12%, transparent); }
+
+.modelCheckName { flex: none; }
+
+.modelCheckId {
+  opacity: 0.55;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelCheckTier {
+  margin-left: auto;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ── 六维数值框 + Tier 徽标（模型卡）───────────────────────────── */
+
+.tierBadge {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--dsw-alias-brand-primary, #4d6bfe);
+  border-radius: 5px;
+  padding: 0 5px;
+  color: var(--dsw-alias-brand-primary, #4d6bfe);
+}
+
+.dimRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dimBox {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: transparent;
 }

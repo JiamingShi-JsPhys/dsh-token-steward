@@ -100,11 +100,11 @@ test('失败事件计入 failures 而不是 chosen', () => {
 test('三种模式分别计数', () => {
   const document = createLedgerDocument()
   foldEvent(document, event({ mode: 'frugal' }), '2026-11-06')
-  foldEvent(document, event({ mode: 'efficiency' }), '2026-11-06')
-  foldEvent(document, event({ mode: 'efficiency' }), '2026-11-06')
+  foldEvent(document, event({ mode: 'balanced' }), '2026-11-06')
+  foldEvent(document, event({ mode: 'balanced' }), '2026-11-06')
   const day = document.days['2026-11-06']
   assert.equal(day?.modes.frugal, 1)
-  assert.equal(day?.modes.efficiency, 2)
+  assert.equal(day?.modes.balanced, 2)
   assert.equal(day?.modes.max_power, undefined)
 })
 

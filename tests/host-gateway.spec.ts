@@ -52,7 +52,7 @@ async function withGateway<T>(
     return next()
   }
 
-  const dir = options.ledger === true ? await mkdtemp(join(tmpdir(), 'umbra-gw-')) : undefined
+  const dir = options.ledger === true ? await mkdtemp(join(tmpdir(), 'steward-gw-')) : undefined
   const ledger = dir === undefined ? undefined : createRouteLedgerStore(dir)
   if (ledger !== undefined) await ledger.load()
 
@@ -104,7 +104,7 @@ test('令牌是随机且足够长', () => {
 
 test('publishedModelIds 总是含 4 个虚拟 id，并跳过 offline 模型', () => {
   const ids = publishedModelIds(config())
-  for (const virtual of ['umbra:auto', 'umbra:frugal', 'umbra:efficiency', 'umbra:max_power']) {
+  for (const virtual of ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power']) {
     assert.ok(ids.includes(virtual), virtual)
   }
   assert.ok(ids.includes('cheap-1'))
@@ -114,7 +114,7 @@ test('publishedModelIds 总是含 4 个虚拟 id，并跳过 offline 模型', ()
 })
 
 test('publishedModelIds 在没有配置时仍然给出 4 个虚拟 id', () => {
-  assert.deepEqual(publishedModelIds(undefined), ['umbra:auto', 'umbra:frugal', 'umbra:efficiency', 'umbra:max_power'])
+  assert.deepEqual(publishedModelIds(undefined), ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power'])
 })
 
 test('GET /v1/models 返回全量清单', async () => {
@@ -126,7 +126,7 @@ test('GET /v1/models 返回全量清单', async () => {
     assert.equal(response.status, 200)
     const body = await response.json() as { object: string, data: Array<{ id: string }> }
     assert.equal(body.object, 'list')
-    assert.ok(body.data.some((entry) => entry.id === 'umbra:auto'))
+    assert.ok(body.data.some((entry) => entry.id === 'steward:auto'))
     assert.ok(body.data.some((entry) => entry.id === 'cheap-1'))
   })
 })
@@ -136,7 +136,7 @@ test('没有令牌时 /v1/models 与 /v1/chat/completions 都是 401', async () 
   await withGateway(async (gateway) => {
     const models = await fetch(gateway.baseUrl() + '/models')
     assert.equal(models.status, 401)
-    const completions = await post(gateway, { model: 'umbra:auto', messages: [] }, 'wrong-token')
+    const completions = await post(gateway, { model: 'steward:auto', messages: [] }, 'wrong-token')
     assert.equal(completions.status, 401)
     const body = await completions.json() as { error: { code: string } }
     assert.equal(body.error.code, 'unauthorized')
@@ -164,27 +164,27 @@ test('未知路径是 404', async () => {
 test('一批请求都被路由到最便宜的模型，上游收到真实 id', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway, calls) => {
-    const response = await post(gateway, { model: 'umbra:auto', messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:auto', messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     assert.equal(calls.length, 1)
     assert.equal(calls[0]?.body.model, 'cheap-1')
   })
 })
 
-test('umbra:max_power 把模式切到最强火力并选中质量分最高的模型', async () => {
+test('steward:max_power 把模式切到最强火力并选中质量分最高的模型', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway, calls) => {
-    const response = await post(gateway, { model: 'umbra:max_power', messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:max_power', messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     assert.equal(calls[0]?.body.model, 'strong-1')
     assert.equal(sharedRouter.getMode(), 'max_power')
   })
 })
 
-test('umbra:pin/<provider>/<model> 直通到指定模型', async () => {
+test('steward:pin/<provider>/<model> 直通到指定模型', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway, calls) => {
-    const response = await post(gateway, { model: 'umbra:pin/strong/strong-1', messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:pin/strong/strong-1', messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     assert.equal(calls[0]?.body.model, 'strong-1')
   })
@@ -202,7 +202,7 @@ test('直接点名真实模型 id 时直通到它', async () => {
 test('上游 429 时自动降级，客户端仍拿到 200', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway, calls) => {
-    const response = await post(gateway, { model: 'umbra:auto', messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:auto', messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     assert.equal(calls.length, 2)
     assert.equal(calls[0]?.body.model, 'cheap-1')
@@ -218,7 +218,7 @@ test('上游 429 时自动降级，客户端仍拿到 200', async () => {
 test('全部候选失败时返回 502 且带可读消息', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway) => {
-    const response = await post(gateway, { model: 'umbra:auto', messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:auto', messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 502)
     const body = await response.json() as { error: { code: string, message: string } }
     assert.equal(body.error.code, 'upstream-failed')
@@ -255,7 +255,7 @@ test('没有可用模型时 400 且列出淘汰原因', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway) => {
     const response = await post(gateway, {
-      model: 'umbra:auto',
+      model: 'steward:auto',
       messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'x' } }] }],
     })
     assert.equal(response.status, 400)
@@ -268,7 +268,7 @@ test('没有可用模型时 400 且列出淘汰原因', async () => {
 test('流式请求原样透传 SSE 帧', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway) => {
-    const response = await post(gateway, { model: 'umbra:auto', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:auto', stream: true, messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     const text = await response.text()
     assert.ok(text.includes('[DONE]'))
@@ -279,7 +279,7 @@ test('流式请求原样透传 SSE 帧', async () => {
 test('流式时给上游补上 include_usage', async () => {
   sharedRouter = createRouter(config())
   await withGateway(async (gateway, calls) => {
-    await post(gateway, { model: 'umbra:auto', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    await post(gateway, { model: 'steward:auto', stream: true, messages: [{ role: 'user', content: 'hi' }] })
     assert.deepEqual(seenStreamOptions(calls[0]), { include_usage: true })
   }, { responses: [async () => sseResponse()] })
 })
@@ -307,7 +307,7 @@ test('配置未加载时返回 503 pool-rejected', async () => {
     now: () => 1_000,
   })
   try {
-    const response = await post(gateway, { model: 'umbra:auto', messages: [] })
+    const response = await post(gateway, { model: 'steward:auto', messages: [] })
     assert.equal(response.status, 503)
     const body = await response.json() as { error: { code: string } }
     assert.equal(body.error.code, 'pool-rejected')
@@ -332,7 +332,7 @@ test('close 是幂等的', async () => {
 /* ─────────────────── 两个真实缺陷的回归断言 ─────────────────── */
 
 test('回归：usage 记在真实 provider/model 名下，不是幽灵键', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'umbra-usage-key-'))
+  const dir = await mkdtemp(join(tmpdir(), 'steward-usage-key-'))
   const ledger = createRouteLedgerStore(dir)
   await ledger.load()
   sharedRouter = createRouter(config())
@@ -349,7 +349,7 @@ test('回归：usage 记在真实 provider/model 名下，不是幽灵键', asyn
     ),
   })
   try {
-    const response = await post(gateway, { model: 'umbra:auto', messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:auto', messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     await response.text()
 
@@ -365,7 +365,7 @@ test('回归：usage 记在真实 provider/model 名下，不是幽灵键', asyn
 })
 
 test('回归：流式 usage 也记在真实模型名下', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'umbra-usage-stream-'))
+  const dir = await mkdtemp(join(tmpdir(), 'steward-usage-stream-'))
   const ledger = createRouteLedgerStore(dir)
   await ledger.load()
   sharedRouter = createRouter(config())
@@ -379,7 +379,7 @@ test('回归：流式 usage 也记在真实模型名下', async () => {
     fetchImpl: async () => sseResponse(),
   })
   try {
-    const response = await post(gateway, { model: 'umbra:auto', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    const response = await post(gateway, { model: 'steward:auto', stream: true, messages: [{ role: 'user', content: 'hi' }] })
     assert.equal(response.status, 200)
     await response.text()
 

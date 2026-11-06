@@ -4,11 +4,11 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const home = await mkdtemp(join(tmpdir(), 'umbra-e2e-'))
+const home = await mkdtemp(join(tmpdir(), 'steward-e2e-'))
 process.env.DSH_HOME = home
 process.env.CHEAP_KEY = 'sk-cheap'
-await mkdir(join(home, 'umbra-budget'), { recursive: true })
-const poolPath = join(home, 'umbra-budget', 'model_pool.yaml')
+await mkdir(join(home, 'token-steward'), { recursive: true })
+const poolPath = join(home, 'token-steward', 'model_pool.yaml')
 await writeFile(poolPath, [
   'version: 1',
   'routing:',
@@ -40,7 +40,7 @@ await apply(ctx, {})
 console.log('routes:', routes.map(r => r.path))
 console.log('logs:'); for (const l of logs) console.log('  ', l)
 
-const statePath = join(home, 'umbra-budget', 'gateway.json')
+const statePath = join(home, 'token-steward', 'gateway.json')
 const state = JSON.parse(await (await import('node:fs/promises')).readFile(statePath, 'utf8'))
 console.log('gateway state:', { port: state.port, baseUrl: state.baseUrl, modelIds: state.modelIds, tokenLen: state.token.length })
 
@@ -58,18 +58,18 @@ const server = createServer((req, res) => {
   void Promise.resolve(route.handler(req, res))
 })
 const port = await new Promise(r => server.listen(0, '127.0.0.1', () => r(server.address().port)))
-const snap = await fetch('http://127.0.0.1:' + port + '/api/umbra-budget/snapshot')
+const snap = await fetch('http://127.0.0.1:' + port + '/api/token-steward/snapshot')
 const snapBody = await snap.json()
-console.log('GET /api/umbra-budget/snapshot ->', snap.status)
+console.log('GET /api/token-steward/snapshot ->', snap.status)
 console.log('  mode:', snapBody.snapshot.mode, '| models:', snapBody.snapshot.models.length, '| pool:', snapBody.snapshot.pool.status)
 console.log('  card:', JSON.stringify(snapBody.snapshot.models[0]))
 
-const modeRes = await fetch('http://127.0.0.1:' + port + '/api/umbra-budget/mode', { method: 'POST', body: JSON.stringify({ mode: 'max_power' }) })
+const modeRes = await fetch('http://127.0.0.1:' + port + '/api/token-steward/mode', { method: 'POST', body: JSON.stringify({ mode: 'max_power' }) })
 console.log('POST /mode ->', modeRes.status, JSON.stringify(await modeRes.json()))
 const persisted = await (await import('node:fs/promises')).readFile(poolPath, 'utf8')
 console.log('persisted mode line:', persisted.split('\n').find(l => l.includes('mode:')))
 
-const gw = await fetch('http://127.0.0.1:' + port + '/api/umbra-budget/gateway')
+const gw = await fetch('http://127.0.0.1:' + port + '/api/token-steward/gateway')
 const gwBody = await gw.json()
 console.log('GET /gateway ->', gw.status, 'modelIds:', gwBody.gateway.modelIds.length)
 

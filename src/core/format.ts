@@ -74,19 +74,19 @@ export function formatRemaining(resumeAt: number | undefined, now: number): stri
 /** 三个模式的中文标签。 */
 export const MODE_LABEL: Record<RoutingMode, string> = {
   frugal: '极致便宜',
-  efficiency: '效率优先',
+  balanced: '效率优先',
   max_power: '最强火力',
 }
 
 /** 三个模式的一句解释，用作按钮 title。 */
 export const MODE_HINT: Record<RoutingMode, string> = {
   frugal: '优先 free / low 档位；只在能力不够时升级',
-  efficiency: '优先 fast 标签与实测延迟；并发自动打散到不同模型',
+  balanced: '优先 fast 标签与实测延迟；并发自动打散到不同模型',
   max_power: '优先能力标签最全、质量分最高的模型',
 }
 
 /** 三个模式的排列顺序（UI 从左到右）。 */
-export const MODE_ORDER: RoutingMode[] = ['frugal', 'efficiency', 'max_power']
+export const MODE_ORDER: RoutingMode[] = ['frugal', 'balanced', 'max_power']
 
 /** 健康状态的中文标签。 */
 export const HEALTH_LABEL: Record<string, string> = {

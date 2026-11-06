@@ -1,7 +1,7 @@
 {
   "format": 1,
   "title": {
-    "en": "dsh-umbra-budget market index (example - do not publish as-is)"
+    "en": "dsh-token-steward market index (example - do not publish as-is)"
   },
   "description": {
     "en": "Fill in the real repository URL and commit before publishing. Validate with the dsh-provider-proxy check:market flow."
@@ -30,19 +30,19 @@
   },
   "plugins": [
     {
-      "name": "dsh-umbra-budget",
+      "name": "dsh-token-steward",
       "title": {
-        "en": "Umbra Budget - Model Matrix Orchestrator",
-        "zh": "Umbra Budget · 模型矩阵调度中枢"
+        "en": "Steward Budget - Model Matrix Orchestrator",
+        "zh": "Steward Budget · 模型矩阵调度中枢"
       },
       "description": {
         "en": "Pool any OpenAI-compatible endpoint; route every call by task profile with dynamic failover, exact-match cache, usage ledger and a live console.",
         "zh": "把任意 OpenAI 兼容端点接入一个矩阵：按任务属性自动选路，动态容灾、本地精确缓存、用量台账与实时控制台。"
       },
-      "author": "dsh-umbra-budget contributors",
-      "homepage": "https://example.com/your-org/DSH-Umbra-Budget",
+      "author": "dsh-token-steward contributors",
+      "homepage": "https://example.com/your-org/DSH-Steward-Budget",
       "repository": {
-        "url": "https://example.com/your-org/DSH-Umbra-Budget.git"
+        "url": "https://example.com/your-org/DSH-Steward-Budget.git"
       },
       "metadata": {
         "category": "orchestration",
@@ -65,7 +65,7 @@
           "publishTimestamp": 0,
           "source": {
             "type": "git",
-            "url": "https://example.com/your-org/DSH-Umbra-Budget.git",
+            "url": "https://example.com/your-org/DSH-Steward-Budget.git",
             "commit": "0000000000000000000000000000000000000000"
           },
           "engines": {

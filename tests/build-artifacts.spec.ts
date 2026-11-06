@@ -139,7 +139,7 @@ test('Host 半区是普通 ESM，导出 name / inject / apply / default', async 
   // Windows 上动态 import 绝对路径必须转成 file:// URL。
   const url = new URL('file:///' + join(ROOT, 'lib/index.js').replace(/\\/g, '/'))
   const module = await import(url.href) as Record<string, unknown>
-  assert.equal(module.name, 'umbra-budget')
+  assert.equal(module.name, 'token-steward')
   assert.deepEqual(module.inject, ['webServer'])
   assert.equal(typeof module.apply, 'function')
   assert.equal(typeof module.default, 'object')
@@ -156,7 +156,7 @@ test('Host 半区不把 yaml 打进来（由宿主提供）', async () => {
 test('Client 半区是 __ModuleLoader__ 工厂形态', async () => {
   const text = await artifact('lib/client.js')
   assert.ok(text.startsWith('window.__ModuleLoader__.load({'), '外壳必须是 loader.load')
-  assert.ok(text.includes('id: "dsh-umbra-budget"'))
+  assert.ok(text.includes('id: "dsh-token-steward"'))
   assert.ok(text.includes('factory: (require) =>'))
   assert.ok(text.trimEnd().endsWith('});'))
 })
@@ -183,9 +183,9 @@ test('Client 半区把 CSS 以 style 标签注入且幂等', async () => {
   assert.equal(observation.styleTags.length, 1, '应当插入且只插入一个 style 标签')
   const tag = observation.styleTags[0]
   assert.ok(tag !== undefined)
-  assert.equal(tag.dataset.plugin, 'dsh-umbra-budget')
-  assert.equal(tag.dataset.pluginCss, 'dsh-umbra-budget/src/client/umbra.module.css')
-  assert.ok(tag.textContent.includes('.umbra_ball'), '样式表里应当有 .umbra_ball')
+  assert.equal(tag.dataset.plugin, 'dsh-token-steward')
+  assert.equal(tag.dataset.pluginCss, 'dsh-token-steward/src/client/steward.module.css')
+  assert.ok(tag.textContent.includes('.steward_ball'), '样式表里应当有 .steward_ball')
   assert.ok(tag.textContent.includes('--dsw-alias-'), '样式必须走主题令牌，否则皮肤换不了色')
 })
 
@@ -193,14 +193,14 @@ test('Client 半区把 CSS 以 style 标签注入且幂等', async () => {
 
 test('Client 半区导出正确的 name / inject / apply', async () => {
   const observation = await mountAgainstFakeHost()
-  assert.equal(observation.exports.name, '@linxin666/dsh-client-ui-umbra-budget')
+  assert.equal(observation.exports.name, 'dsh-token-steward')
   assert.deepEqual(observation.exports.inject, ['slots', 'locale'])
   assert.equal(typeof observation.exports.apply, 'function')
 })
 
 test('注册文案命名空间，且取词失败时退回中文键源', async () => {
   const observation = await mountAgainstFakeHost()
-  assert.deepEqual(observation.localeNamespaces, ['umbra-budget'])
+  assert.deepEqual(observation.localeNamespaces, ['token-steward'])
   assert.ok(observation.effects.some((label) => label.includes('locale')), 'locale 注册必须可回收')
 })
 
@@ -216,6 +216,6 @@ test('设置页注册带上 order 与 label：设置导航要靠它们渲染那�
   assert.ok(settings !== undefined, '必须注册到 settings.section')
   assert.equal(settings.order, 140, '必须给出排序权重（排在 dsh-usage 的 100 之后）')
   assert.equal(typeof settings.label, 'function', 'label 必须是函数，随语言切换重取')
-  assert.equal(settings.locale, 'umbra-budget')
-  assert.equal(settings.id, 'umbra-budget')
+  assert.equal(settings.locale, 'token-steward')
+  assert.equal(settings.id, 'token-steward')
 })

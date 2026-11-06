@@ -9,17 +9,17 @@
  *  2. 有 tools 就必须有 tool-use，这不是偏好而是硬约束（模型不会调工具，任务必然失败）；
  *  3. 虚拟模型 id 是显式的用户意图，优先于任何自动推断。
  */
-import type { CapabilityTag, InputModality, RouteIntent, RoutingMode } from './types.ts'
+import type { CapabilityTag, DimensionKey, InputModality, RouteIntent, RoutingMode } from './types.ts'
 
 /** 虚拟模型 id 的前缀。 */
-export const VIRTUAL_PREFIX = 'umbra:'
+export const VIRTUAL_PREFIX = 'steward:'
 
 /** 三个模式虚拟 id。 */
 export const MODE_IDS: Record<string, RoutingMode> = {
-  'umbra:auto': 'frugal',
-  'umbra:frugal': 'frugal',
-  'umbra:efficiency': 'efficiency',
-  'umbra:max_power': 'max_power',
+  'steward:auto': 'frugal',
+  'steward:frugal': 'frugal',
+  'steward:balanced': 'balanced',
+  'steward:max_power': 'max_power',
 }
 
 /** 一段文本的粗略 token 估算：4 字符 ≈ 1 token。 */
@@ -33,7 +33,7 @@ const MESSAGE_OVERHEAD_TOKENS = 4
 
 /** 解析出的虚拟路由意图。 */
 export interface VirtualRoute {
-  /** umbra:auto 之类；不是虚拟 id 时为 undefined。 */
+  /** steward:auto 之类；不是虚拟 id 时为 undefined。 */
   virtual: string
   /** 固定模式（auto 不固定）。 */
   mode?: RoutingMode
@@ -45,9 +45,9 @@ export interface VirtualRoute {
  * 解析模型 id。
  *
  * 支持的形态：
- *   umbra:auto / umbra:frugal / umbra:efficiency / umbra:max_power
- *   umbra:pin/<provider>/<model>
- *   umbra:alias/<name>
+ *   steward:auto / steward:frugal / steward:balanced / steward:max_power
+ *   steward:pin/<provider>/<model>
+ *   steward:alias/<name>
  *   其他任意 id → 直通（作为 provider/model 无法确定，交由网关查表）
  */
 export function parseVirtualModel(modelId: string): VirtualRoute {
@@ -55,7 +55,7 @@ export function parseVirtualModel(modelId: string): VirtualRoute {
   const rest = modelId.slice(VIRTUAL_PREFIX.length)
   const mode = MODE_IDS[modelId]
   if (mode !== undefined) {
-    return modelId === 'umbra:auto' ? { virtual: modelId } : { virtual: modelId, mode }
+    return modelId === 'steward:auto' ? { virtual: modelId } : { virtual: modelId, mode }
   }
   if (rest.startsWith('pin/')) {
     const parts = rest.slice(4).split('/')
@@ -151,9 +151,39 @@ export function inferModalities(body: Record<string, unknown>): InputModality[] 
 /** 一次请求的 burst 归因键：同一毫秒窗口内的并发请求共享一个键。 */
 export function burstKeyOf(body: Record<string, unknown>, now: number, windowMs = 250): string {
   // 优先用调用方显式给的会话/批次线索：子代理并发通常共享同一个 system 提示前缀。
-  const hint = body.user ?? body.session_id ?? body.__umbra_burst
+  const hint = body.user ?? body.session_id ?? body.__steward_burst
   if (typeof hint === 'string' && hint !== '') return 'hint:' + hint
   return 'window:' + String(Math.floor(now / windowMs))
+}
+
+/** 长上下文维度的判定门槛（粗估 token）。 */
+const LONG_CONTEXT_TOKENS = 24_000
+
+/** 代码痕迹：前 4000 字符内命中任一即认为请求以编码为主。 */
+const CODE_MARKERS = ['```', 'function ', 'def ', 'class ', 'const ', 'import ', 'import ', 'npm ', 'stack trace', 'Traceback', 'error:']
+
+/**
+ * 推断请求的主评分维度（六维选路的主键）。
+ * 优先级：带工具 → agentic；超长 → longContext；有代码痕迹 → coding；其余 → reasoning。
+ * 纯函数、O(messages)：与 estimateInputTokens 同一趟量级，不做任何深扫描。
+ */
+export function inferDimension(body: Record<string, unknown>, needsTools: boolean, estimatedInputTokens: number): DimensionKey {
+  if (needsTools) return 'agentic'
+  if (estimatedInputTokens >= LONG_CONTEXT_TOKENS) return 'longContext'
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  let scanned = 0
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null) continue
+    const text = contentText((message as Record<string, unknown>).content)
+    if (text === '') continue
+    const head = text.slice(0, 4_000)
+    for (const marker of CODE_MARKERS) {
+      if (head.includes(marker)) return 'coding'
+    }
+    scanned += head.length
+    if (scanned > 16_000) break
+  }
+  return 'reasoning'
 }
 
 /** 推断的完整结果。 */
@@ -175,12 +205,14 @@ export function inferIntent(body: Record<string, unknown>, modelId: string, now:
   const requiredCapabilities = inferCapabilities(body)
   if (needsTools && !requiredCapabilities.includes('tool-use')) requiredCapabilities.push('tool-use')
 
+  const estimatedInput = estimateInputTokens(body)
   const intent: RouteIntent = {
     requiredCapabilities,
     requiredModalities: inferModalities(body),
-    estimatedInputTokens: estimateInputTokens(body),
+    estimatedInputTokens: estimatedInput,
     expectedOutputTokens: estimateOutputTokens(body),
     needsTools,
+    dimension: inferDimension(body, needsTools, estimatedInput),
     stream: body.stream === true,
     burstKey: burstKeyOf(body, now),
   }

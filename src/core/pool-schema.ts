@@ -46,7 +46,7 @@ export const COST_LEVELS: readonly CostLevel[] = ['high', 'medium', 'low', 'free
 
 export const AVAILABILITIES: readonly Availability[] = ['direct', 'proxy', 'offline']
 
-export const ROUTING_MODES: readonly RoutingMode[] = ['frugal', 'efficiency', 'max_power']
+export const ROUTING_MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power']
 
 export const API_SHAPES: readonly ApiShape[] = ['openai-completions']
 

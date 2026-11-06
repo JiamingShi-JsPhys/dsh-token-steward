@@ -1,0 +1,7 @@
+- insert:
+    - id: umbra-budget
+      name: dsh-umbra-budget
+      config:
+        enabled: true
+        mode: frugal
+        poolPath: ''

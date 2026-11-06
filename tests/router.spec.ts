@@ -73,13 +73,14 @@ test('frugal 模式在需要 vision 时被迫升级到全能模型', () => {
   assert.equal(decision.chosen.model, 'omni-pro')
 })
 
-test('efficiency 模式选中带 fast 标签的模型，而不是最便宜的', () => {
+test('balanced 模式选中质量成本比最优的模型（0.65 质量 + 0.35 成本）', () => {
   const { router, decision } = decide(matrix(), undefined)
-  router.setMode('efficiency')
+  router.setMode('balanced')
   const next = router.plan(intent(), 1_000, 'r2')
   assert.ok(next.ok)
-  assert.equal(next.decision.chosen.provider, 'midbox')
-  assert.equal(next.decision.chosen.model, 'fast-mid')
+  // blend：free-slow 54.5 / fast-mid 53.25 / omni-pro 72 —— 质量占优者胜。
+  assert.equal(next.decision.chosen.provider, 'premium')
+  assert.equal(next.decision.chosen.model, 'omni-pro')
   assert.equal(decision.mode, 'frugal')
 })
 
@@ -279,9 +280,9 @@ test('setMode 切换后 plan 立刻按新模式决策', () => {
   assert.equal(planned.decision.chosen.model, 'omni-pro')
 })
 
-test('efficiency 模式在 burst 内把四个并发摊到四个不同模型', () => {
+test('balanced 模式在 burst 内把四个并发摊到四个不同模型', () => {
   const config = matrix()
-  const router = createRouter(config, { maxAttempts: 1 }, 'efficiency')
+  const router = createRouter(config, { maxAttempts: 1 }, 'balanced')
   const picks: string[] = []
   for (let index = 0; index < 4; index += 1) {
     const planned = router.plan(intent({ burstKey: 'swarm-1' }), 1_000 + index, 'r' + String(index))
@@ -292,7 +293,7 @@ test('efficiency 模式在 burst 内把四个并发摊到四个不同模型', ()
 })
 
 test('burst 过了记忆窗口后重新从零开始计数', () => {
-  const router = createRouter(matrix(), { maxAttempts: 1 }, 'efficiency')
+  const router = createRouter(matrix(), { maxAttempts: 1 }, 'balanced')
   const first = router.plan(intent({ burstKey: 'k' }), 1_000, 'r1')
   assert.ok(first.ok)
   const second = router.plan(intent({ burstKey: 'k' }), 1_000 + 10_000, 'r2')

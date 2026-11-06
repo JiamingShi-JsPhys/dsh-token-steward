@@ -1,5 +1,5 @@
 /**
- * dsh-umbra-budget · 核心契约类型
+ * dsh-token-steward · 核心契约类型
  *
  * 这些类型是 host 半区（配置/路由/网关/计量）与 client 半区（shell.overlay 面板）
  * 共同消费的唯一契约。全部可按 JSON 原样过线：不含函数、Date、Map、class 实例。
@@ -11,7 +11,7 @@
 /* ────────────────────────────── 基础枚举 ────────────────────────────── */
 
 /** 全局调度模式；UI 可在运行时切换，覆盖 YAML 的 routing.mode。 */
-export type RoutingMode = 'frugal' | 'efficiency' | 'max_power'
+export type RoutingMode = 'frugal' | 'balanced' | 'max_power'
 
 /** 成本档位；frugal 模式的主序。 */
 export type CostLevel = 'high' | 'medium' | 'low' | 'free'
@@ -46,6 +46,52 @@ export type ApiShape = 'openai-completions'
  */
 export type CredentialRef = string
 
+/* ────────────────────────────── 六维评分与厂家目录 ────────────────────────────── */
+
+/** 六个评分维度（产品评分表的列）。 */
+export type DimensionKey = 'reasoning' | 'longContext' | 'coding' | 'agentic' | 'proWork' | 'factuality'
+
+/** 一维评分：数值与字母评级是彼此独立的事实字段（73.2 可以是 SSS 而 75.0 是 SS）。 */
+export interface DimensionScore {
+  score: number
+  grade: string
+}
+
+/** 六维评分集合；六个键一个不能少（见 provider-templates 的 DIMENSION_KEYS）。 */
+export type DimensionSet = Record<DimensionKey, DimensionScore>
+
+/** 一个模型在「管家」语义下的完整档案（目录命中或用户覆盖后的最终形态）。 */
+export interface ModelInfo {
+  id: string
+  name: string
+  /** SSS ~ D；目录未收录时为 'NA'。 */
+  tier: string
+  contextWindow: number
+  /** null = 未定价，面板显示 —，绝不冒充 0。 */
+  costPer1kInput: number | null
+  costPer1kOutput: number | null
+  /** coding / reasoning / vision / image_gen / tool-use / fast … */
+  capabilities: string[]
+  scores: DimensionSet
+}
+
+/**
+ * 一家厂商的面板配置（vendors.json 的一条）。
+ * apiKey 是用户在面板里粘贴的明文，只落 0600 的 vendors.json，
+ * 永不进入日志、快照与任何过线 JSON（GET 接口只回掩码尾部）。
+ */
+export interface VendorConfig {
+  vendorId: string
+  vendorName: string
+  /** 目录里的官方 Base URL（Custom 厂商为用户所填）。 */
+  officialUrl: string
+  /** 用户实际使用的 Base URL；空串表示就用 officialUrl。 */
+  customUrl: string
+  apiKey: string
+  /** 用户勾选启用的模型 id（来自 /v1/models 拉取或手填）。 */
+  enabledModels: string[]
+}
+
 /* ────────────────────────────── 配置层 ────────────────────────────── */
 
 /** 一个模型的计价表（每百万 token）；缺省时该模型计为「未定价」，成本显示 —，不冒充 0。 */
@@ -73,15 +119,21 @@ export interface ModelEntry {
   /** availability=proxy 时必填的代理 URL。 */
   proxy_url?: string
   input_modalities: InputModality[]
-  /** 单模型并发闸门；efficiency 模式的打散上限。 */
+  /** 单模型并发闸门；balanced 模式的打散上限。 */
   max_concurrency: number
   /** 每分钟请求上限（滑窗）；缺省不限。 */
   rpm?: number
-  /** 0-100 的能力分，max_power 模式的主序。 */
+  /** 0-100 的能力分，legacy 模式的主序；六维评分存在时不再作为主序。 */
   quality_rank: number
   pricing?: PricingTable
   /** 自由标签，面板展示用，不参与路由。 */
   tags: Record<string, string>
+  /** ── Token 管家扩展（由 ModelInfo 合成时填入）── */
+  tier?: string
+  overall?: number
+  dimensions?: DimensionSet
+  costPer1kInput?: number | null
+  costPer1kOutput?: number | null
 }
 
 /** 一个 OpenAI 兼容上游（YAML: providers[]）。 */
@@ -143,7 +195,7 @@ export interface PoolConfig {
   defaults: RoutingDefaults
   routing: {
     mode: RoutingMode
-    /** key 是虚拟 id 的后半段：alias 名 → umbra:alias/<name>。 */
+    /** key 是虚拟 id 的后半段：alias 名 → steward:alias/<name>。 */
     aliases: Record<string, RoutingAlias>
     /** agent_id → 路由意图覆盖（子代理级钉子）。 */
     agent_overrides: Record<string, RoutingAlias>
@@ -165,6 +217,8 @@ export interface RouteIntent {
   expectedOutputTokens: number
   /** 请求是否携带 tools；为真时隐式要求 tool-use。 */
   needsTools: boolean
+  /** 请求的主评分维度（六维选路的主键）；推断不出时缺省 reasoning。 */
+  dimension: DimensionKey
   stream: boolean
   /** 并发打散组：同一批并发请求共享一个 burstKey。 */
   burstKey: string
@@ -329,6 +383,10 @@ export interface ModelCardView {
   provider: string
   model: string
   displayName: string
+  /** 六维目录的字母评级；legacy 配置为 undefined。 */
+  tier?: string
+  /** 六维评分；legacy 配置为 undefined，卡片不渲染数值框。 */
+  dimensions?: DimensionSet
   capabilities: CapabilityTag[]
   costLevel: CostLevel
   contextWindow: number
@@ -396,15 +454,15 @@ export interface MatrixSnapshot {
 
 /* ────────────────────────────── 网关协议 ────────────────────────────── */
 
-/** 网关状态文件（$DSH_HOME/umbra-budget/gateway.json，0600）供面板与用户读取接线参数。 */
+/** 网关状态文件（$DSH_HOME/token-steward/gateway.json，0600）供面板与用户读取接线参数。 */
 export interface GatewayState {
   appliedAt: number
   pid: number
   host: '127.0.0.1'
   port: number
-  /** baseURL，直接抄进 llm-pi-ai 的 providers.umbra.baseURL。 */
+  /** baseURL，直接抄进 llm-pi-ai 的 providers.steward.baseURL。 */
   baseUrl: string
-  /** 网关 /v1/models 公布的模型 id（矩阵全集 + 4 个 umbra:* 虚拟 id）。 */
+  /** 网关 /v1/models 公布的模型 id（矩阵全集 + 4 个 steward:* 虚拟 id）。 */
   modelIds: string[]
   /** 本地 Bearer 令牌；同时写入状态文件，供 profile 的 apiKeyEnv 解析。 */
   token: string

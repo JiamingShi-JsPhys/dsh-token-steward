@@ -210,7 +210,7 @@ function repairDay(raw: Record<string, unknown>): DayLedger {
 
   if (typeof raw.modes === 'object' && raw.modes !== null && !Array.isArray(raw.modes)) {
     for (const [mode, count] of Object.entries(raw.modes as Record<string, unknown>)) {
-      if (mode !== 'frugal' && mode !== 'efficiency' && mode !== 'max_power') continue
+      if (mode !== 'frugal' && mode !== 'balanced' && mode !== 'max_power') continue
       const parsed = nonNegative(count)
       if (parsed > 0) day.modes[mode] = parsed
     }

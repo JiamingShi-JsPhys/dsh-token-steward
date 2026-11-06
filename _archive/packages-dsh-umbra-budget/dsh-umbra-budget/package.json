@@ -1,0 +1,79 @@
+{
+  "name": "dsh-umbra-budget",
+  "version": "0.1.0",
+  "description": "DSH 模型矩阵调度中枢：任意 OpenAI 兼容端点入池，按任务属性在 frugal/efficiency/max_power 三模式间自动分发，带动态容灾、用量台账与实时控制台",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "model_pool.example.yaml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/pool.test.ts tests/classify.test.ts tests/modes.test.ts tests/health.test.ts tests/ledger.test.ts tests/reroute.test.ts tests/cache.test.ts tests/host-e2e.test.ts tests/host-shell.test.ts"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "model-matrix",
+    "llm-router"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "*",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "undici": ">=6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "undici": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "~5.7.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  }
+}

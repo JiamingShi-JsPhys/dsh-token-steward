@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react'
 import type { AgentRouteView } from '../../core/types.ts'
 import { agentRows } from '../../core/panel-view.ts'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 代理协作视图的 props。 */
 export interface AgentLanesProps {

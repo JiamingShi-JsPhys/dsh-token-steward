@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react'
 import type { RouteEventView } from '../../core/types.ts'
 import { routeRows } from '../../core/panel-view.ts'
-import css from '../umbra.module.css'
+import css from '../steward.module.css'
 
 /** 路由监控的 props。 */
 export interface RouteMonitorProps {

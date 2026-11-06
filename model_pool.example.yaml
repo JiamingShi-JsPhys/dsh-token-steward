@@ -1,6 +1,6 @@
 # ============================================================================
-# dsh-umbra-budget · model_pool.yaml  (示例 / 完整字段演示)
-# 落位：$DSH_HOME/umbra-budget/model_pool.yaml
+# dsh-token-steward · model_pool.yaml  (示例 / 完整字段演示)
+# 落位：$DSH_HOME/token-steward/model_pool.yaml
 # 规则：任意一条非法 → 整份配置被拒绝（不半应用），沿用上一次有效矩阵。
 # ============================================================================
 version: 1

@@ -1,10 +1,10 @@
 /**
- * dsh-umbra-budget · Host 半区。
+ * dsh-token-steward · Host 半区。
  *
  * 一次 apply 只做三件事，且都可被 ctx.effect 干净回收：
  *  1. 把 model_pool.yaml 读成矩阵，建路由引擎，起本地网关；
  *  2. 把面板要的四条 HTTP 路由挂到宿主 webServer 上；
- *  3. 把网关接线参数写进 $DSH_HOME/umbra-budget/gateway.json，
+ *  3. 把网关接线参数写进 $DSH_HOME/token-steward/gateway.json，
  *     并盯着 model_pool.yaml 的改动做热重载。
  *
  * 设计上刻意如此：所有判断都在 core/ 的纯函数里，所有 IO 都在 host/ 的
@@ -18,10 +18,14 @@ import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 
 import { createPoolFileLoader } from './host/pool-file.ts'
+import { createVendorStore, coerceVendorsList, maskKey, type VendorsDocument } from './host/vendor-store.ts'
+import { synthesizePool, vendorIsRoutable } from './core/vendors.ts'
+import { DEFAULT_CACHE } from './core/pool-schema.ts'
+import type { VendorConfig } from './core/types.ts'
 import { createPoolWatcher } from './host/pool-watch.ts'
 import { createRouteLedgerStore } from './host/ledger-store.ts'
-import { createRouter, type UmbraRouter } from './core/router.ts'
-import { resolveCredential } from './host/credentials.ts'
+import { createRouter, type StewardRouter } from './core/router.ts'
+import { credentialKind, resolveCredential } from './host/credentials.ts'
 import { startGateway, type Gateway } from './host/gateway.ts'
 import { makePanelRoutes } from './host/routes.ts'
 import { readUsageProjection } from './host/usage-bridge.ts'
@@ -29,13 +33,13 @@ import { writeFileAtomic } from './host/atomic-file.ts'
 import type { GatewayState, PoolConfig, RoutingMode } from './core/types.ts'
 
 /** 插件名（cordis 行 id 与日志前缀）。 */
-export const name = 'umbra-budget'
+export const name = 'token-steward'
 
 /** 必需服务：HTTP 载体。llm 不 inject——没有模型的部署也该能挂载插件。 */
 export const inject = ['webServer']
 
 /** 配置形状（schemastery 由宿主注入，这里只声明读到的字段）。 */
-export interface UmbraConfigFields {
+export interface StewardConfigFields {
   enabled?: unknown
   poolPath?: unknown
   retainDays?: unknown
@@ -96,11 +100,11 @@ export function dshHome(): string {
 
 /** 本插件的数据目录。 */
 export function dataDirectory(): string {
-  return join(dshHome(), 'umbra-budget')
+  return join(dshHome(), 'token-steward')
 }
 
 /** 解析配置。 */
-export function resolveConfig(config?: UmbraConfigFields): ResolvedConfig {
+export function resolveConfig(config?: StewardConfigFields): ResolvedConfig {
   return {
     enabled: readBoolean(config?.enabled, true),
     poolPath: readString(config?.poolPath) ?? join(dataDirectory(), 'model_pool.yaml'),
@@ -135,9 +139,9 @@ export async function apply(ctx: {
   logger?: (name: string) => { info(...args: unknown[]): void, warn(...args: unknown[]): void, error(...args: unknown[]): void }
   webServer?: { register(route: unknown): () => void }
   effect?: (fn: () => () => void, label?: string) => void
-}, config?: UmbraConfigFields): Promise<void> {
+}, config?: StewardConfigFields): Promise<void> {
   const settings = resolveConfig(config)
-  const log = ctx.logger?.('umbra-budget') ?? { info() {}, warn() {}, error() {} }
+  const log = ctx.logger?.('token-steward') ?? { info() {}, warn() {}, error() {} }
   if (!settings.enabled) {
     log.info('disabled by configuration; nothing mounted')
     return
@@ -146,15 +150,51 @@ export async function apply(ctx: {
   const directory = dataDirectory()
   await mkdir(directory, { recursive: true }).catch(() => {})
 
-  // ── 配置 ────────────────────────────────────────────────
+  // ── 配置（vendors.json 优先，model_pool.yaml 作为高级回退）───
   const decode = await loadYamlDecoder()
   const loader = createPoolFileLoader(settings.poolPath, decode)
   await loader.load(Date.now())
-  let configValue: PoolConfig | undefined = loader.current()
-  let router: UmbraRouter | undefined = configValue === undefined ? undefined : createRouter(configValue)
+  const vendorStore = createVendorStore(directory)
+  let vendorDoc: VendorsDocument = await vendorStore.load()
+  let usingVendors = vendorDoc.vendors.length > 0
+  let configValue: PoolConfig | undefined = currentPool()
+  let router: StewardRouter | undefined = configValue === undefined ? undefined : createRouter(configValue)
+
+  /** 当前生效配置：厂家面板有内容时以 vendors.json 合成，否则回退 yaml。 */
+  function currentPool(): PoolConfig | undefined {
+    return usingVendors
+      ? synthesizePool(vendorDoc.vendors, vendorDoc.mode, DEFAULT_CACHE)
+      : loader.current()
+  }
+
+  /** 面板整表保存厂家配置；apiKey 为空串表示保留已存明文。 */
+  async function saveVendors(mode: RoutingMode, input: unknown): Promise<{ ok: boolean, error?: string }> {
+    const incoming = coerceVendorsList(input)
+    const merged: VendorConfig[] = incoming.map((vendor) => {
+      if (vendor.apiKey !== '') return vendor
+      const existing = vendorDoc.vendors.find((entry) => entry.vendorId === vendor.vendorId)
+      return { ...vendor, apiKey: existing?.apiKey ?? '' }
+    })
+    vendorDoc = { version: vendorDoc.version, mode, vendors: merged }
+    await vendorStore.save(vendorDoc)
+    usingVendors = vendorDoc.vendors.length > 0
+    configValue = currentPool()
+    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+    await refreshSecrets()
+    log.info('vendors saved (%d configured, %d routable)', merged.length, merged.filter(vendorIsRoutable).length)
+    return { ok: true }
+  }
 
   /** 配置变了就重建路由引擎；失败时保留旧引擎。 */
   async function reload(now: number): Promise<{ ok: boolean, status: string, error?: string }> {
+    vendorDoc = await vendorStore.load()
+    usingVendors = vendorDoc.vendors.length > 0
+    if (usingVendors) {
+      configValue = currentPool()
+      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+      await refreshSecrets()
+      return { ok: true, status: 'ok' }
+    }
     const result = await loader.load(now)
     if (result.ok && result.config !== undefined) {
       configValue = result.config
@@ -176,9 +216,22 @@ export async function apply(ctx: {
       return
     }
     for (const provider of configValue.providers) {
+      // 厂家合成的条目走 vendors.json 的明文（sentinel 不是凭据引用）。
+      if (provider.api_key.startsWith('steward-vendor:')) continue
       const resolved = await resolveCredential(provider.api_key)
       if (resolved.ok) next.set(provider.provider_name, resolved.secret)
       else log.warn('provider %s: %s', provider.provider_name, resolved.reason)
+    }
+    for (const vendor of vendorDoc.vendors) {
+      if (vendor.apiKey === '') continue
+      // 双语义：env:/file:/literal: 引用走解析器；面板粘贴的明文直接使用。
+      if (credentialKind(vendor.apiKey) === 'unknown') {
+        next.set(vendor.vendorId, vendor.apiKey)
+        continue
+      }
+      const resolved = await resolveCredential(vendor.apiKey)
+      if (resolved.ok) next.set(vendor.vendorId, resolved.secret)
+      else log.warn('vendor %s: %s', vendor.vendorId, resolved.reason)
     }
     secrets = next
   }
@@ -209,7 +262,8 @@ export async function apply(ctx: {
     try {
       gateway = await startGateway({
         config: () => configValue,
-        router: () => router as UmbraRouter,
+        router: () => router as StewardRouter,
+        vendors: () => vendorDoc.vendors,
         secrets: () => secrets,
         ledger,
         log: (level, message) => { log[level]('%s', message) },
@@ -256,12 +310,32 @@ export async function apply(ctx: {
       setMode: (mode: RoutingMode) => {
         if (router === undefined) return false
         router.setMode(mode)
-        // 模式选择要跨重启保留：写回配置文件。
-        void persistMode(settings.poolPath, mode).catch((error: unknown) => {
-          log.warn('cannot persist mode: %s', messageOf(error))
-        })
+        if (usingVendors) {
+          // 模式选择要跨重启保留：vendors.json 路径写回自己的文档。
+          vendorDoc = { ...vendorDoc, mode }
+          void vendorStore.save(vendorDoc).catch((error: unknown) => {
+            log.warn('cannot persist mode: %s', messageOf(error))
+          })
+        } else {
+          void persistMode(settings.poolPath, mode).catch((error: unknown) => {
+            log.warn('cannot persist mode: %s', messageOf(error))
+          })
+        }
         return true
       },
+      getVendors: () => ({
+        mode: vendorDoc.mode,
+        vendors: vendorDoc.vendors.map((vendor) => ({
+          vendorId: vendor.vendorId,
+          vendorName: vendor.vendorName,
+          officialUrl: vendor.officialUrl,
+          customUrl: vendor.customUrl,
+          hasKey: vendor.apiKey !== '',
+          apiKeyMasked: maskKey(vendor.apiKey),
+          enabledModels: [...vendor.enabledModels],
+        })),
+      }),
+      saveVendors: (mode, input) => saveVendors(mode, input),
       reload: () => reload(Date.now()),
       gateway: () => gateway === undefined
         ? undefined
@@ -320,13 +394,13 @@ export async function apply(ctx: {
     void ledger.flush().catch(() => {})
   }
 
-  if (typeof ctx.effect === 'function') ctx.effect(() => teardown, 'umbra-budget: runtime')
+  if (typeof ctx.effect === 'function') ctx.effect(() => teardown, 'token-steward: runtime')
   else log.warn('ctx.effect is unavailable; resources rely on process exit')
 }
 
 /** 网关公布的模型 id（与 host/gateway 的规则同源）。 */
 function gatewayModelIds(config: PoolConfig | undefined): string[] {
-  const ids = ['umbra:auto', 'umbra:frugal', 'umbra:efficiency', 'umbra:max_power']
+  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power']
   if (config === undefined) return ids
   for (const provider of config.providers) {
     for (const model of provider.models) {

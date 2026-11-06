@@ -1,4 +1,4 @@
-# dsh-umbra-budget · model matrix orchestrator
+# dsh-token-steward · model matrix orchestrator
 
 Put **any** OpenAI-compatible service into one matrix — official APIs, free mirrors,
 proxy-switched endpoints, or an expensive all-rounder — then route by task nature,
@@ -29,7 +29,7 @@ agent loop / subagent ──► ctx.llm ──► llm-pi-ai ──► 127.0.0.1:
 | Mode | Primary order | Tie-breakers |
 |---|---|---|
 | **frugal** | `cost_level`: free > low > medium > high | latency → idle → quality |
-| **efficiency** | `fast` tag + measured latency | in-flight → **burst spreading** |
+| **balanced** | `fast` tag + measured latency | in-flight → **burst spreading** |
 | **max_power** | `quality_rank` | capability count → context window |
 
 Efficiency spreading is decisive, not a preference: within one burst (`idea_swarm`
@@ -73,14 +73,14 @@ Three strictness rules:
 ## Install
 
 ```bash
-cd ~/.dsh/profiles/desktop && pnpm add dsh-umbra-budget
+cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 # then insert the row from the package's cordis.patch.yml
 ```
 
 After the first launch:
 
-1. edit `$DSH_HOME/umbra-budget/model_pool.yaml` (fields in `model_pool.example.yaml`);
-2. read `baseUrl` and `token` from `$DSH_HOME/umbra-budget/gateway.json`;
+1. edit `$DSH_HOME/token-steward/model_pool.yaml` (fields in `model_pool.example.yaml`);
+2. read `baseUrl` and `token` from `$DSH_HOME/token-steward/gateway.json`;
 3. point `llm-pi-ai` at the gateway:
 
 ```yaml
@@ -88,16 +88,16 @@ After the first launch:
   name: '@deepseek-ai/dsh-llm-pi-ai'
   config:
     providers:
-      umbra:
-        displayName: Umbra Matrix
+      steward:
+        displayName: Steward Matrix
         api: openai-completions
-        apiKeyEnv: UMBRA_LOCAL_TOKEN
+        apiKeyEnv: STEWARD_LOCAL_TOKEN
         baseURL: http://127.0.0.1:<port>/v1
         models:
-          - { id: 'umbra:auto', name: 'Umbra Auto' }
-          - { id: 'umbra:frugal', name: 'Umbra Frugal' }
-          - { id: 'umbra:efficiency', name: 'Umbra Efficiency' }
-          - { id: 'umbra:max_power', name: 'Umbra Max Power' }
+          - { id: 'steward:auto', name: 'Steward Auto' }
+          - { id: 'steward:frugal', name: 'Steward Frugal' }
+          - { id: 'steward:balanced', name: 'Steward Efficiency' }
+          - { id: 'steward:max_power', name: 'Steward Max Power' }
 ```
 
 Restart the DSH service for the profile change to take effect.
@@ -106,10 +106,10 @@ Restart the DSH service for the profile change to take effect.
 
 | id | Meaning |
 |---|---|
-| `umbra:auto` | route by the current global mode (switching mode switches this) |
-| `umbra:frugal` / `umbra:efficiency` / `umbra:max_power` | pin one mode |
-| `umbra:pin/<provider>/<model>` | pass through to one model (still metered, still fails over) |
-| `umbra:alias/<name>` | a custom intent from `routing.aliases` |
+| `steward:auto` | route by the current global mode (switching mode switches this) |
+| `steward:frugal` / `steward:balanced` / `steward:max_power` | pin one mode |
+| `steward:pin/<provider>/<model>` | pass through to one model (still metered, still fails over) |
+| `steward:alias/<name>` | a custom intent from `routing.aliases` |
 
 A real model id from the matrix is also accepted and passes straight through.
 
@@ -139,7 +139,7 @@ Polling stops when the panel is collapsed or the page is hidden.
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | off means nothing is mounted |
-| `poolPath` | `$DSH_HOME/umbra-budget/model_pool.yaml` | matrix file |
+| `poolPath` | `$DSH_HOME/token-steward/model_pool.yaml` | matrix file |
 | `retainDays` | `180` | routing ledger retention |
 | `usagePollMs` | `15000` | how often the dsh-usage ledger is read (min 2000) |
 | `gatewayPort` | `0` | gateway port, 0 = system-assigned |

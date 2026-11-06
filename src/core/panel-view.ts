@@ -239,6 +239,6 @@ export function ballBadge(snapshot: MatrixSnapshot): string {
 }
 
 /** 悬浮球的颜色主题：按当前模式区分。 */
-export function ballTone(snapshot: MatrixSnapshot): 'frugal' | 'efficiency' | 'max_power' {
+export function ballTone(snapshot: MatrixSnapshot): 'frugal' | 'balanced' | 'max_power' {
   return snapshot.mode
 }

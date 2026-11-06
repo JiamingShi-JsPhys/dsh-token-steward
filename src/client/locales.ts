@@ -3,13 +3,13 @@
  *
  * 刻意不用模板字符串拼句子：中文与英文的语序不同，拼出来的句子必然有一半不自然。
  */
-export const NS = 'umbra-budget'
+export const NS = 'token-steward'
 
 export const zh = {
   'ball.open': '展开模型矩阵',
   'ball.close': '收起模型矩阵',
   'ball.badge': '今日花费',
-  'panel.title': 'Umbra 模型矩阵',
+  'panel.title': 'Steward 模型矩阵',
   'panel.subtitle': '按任务属性自动分发；失败自动换人',
   'panel.close': '关闭',
   'panel.reload': '重新读取配置',
@@ -39,7 +39,7 @@ export const zh = {
   'agents.idle': '空闲',
   'panel.error': '错误',
   'settings.nav': '模型矩阵',
-  'settings.title': 'Umbra 模型矩阵',
+  'settings.title': 'Steward 模型矩阵',
   'settings.description': '配置模型池、调度模式与网关接线',
   'settings.poolPath': '配置文件路径',
   'settings.gateway': '网关地址',
@@ -50,15 +50,28 @@ export const zh = {
   'settings.mode': '默认调度模式',
   'settings.retainDays': '台账保留天数',
   'settings.hint': '在 profile 的 llm-pi-ai 里把 baseURL 指向网关地址，apiKeyEnv 指向一个存放本地令牌的环境变量。',
+  'vendors.title': '厂家配置',
+  'vendors.tabCustom': 'Custom 自定义',
+  'vendors.apiKey': 'API Key',
+  'vendors.baseUrl': 'Base URL',
+  'vendors.keyPlaceholder': '粘贴密钥（保存后只显示掩码）',
+  'vendors.anthropicWarning': '防封警告：强烈不建议使用官方账号直接绑定，极易封号。请填入第三方中转站（Base URL）与 Key。',
+  'vendors.fetch': '测试连接并拉取模型',
+  'vendors.fetchFailed': '拉取失败',
+  'vendors.save': '保存厂家配置',
+  'vendors.saved': '已保存（模型矩阵自动重建）',
+  'vendors.noGateway': '网关未启动：先用下方接线信息接入并重启 DSH',
+  'vendors.manualIds': '手动输入模型 ID（每行一个）',
+  'vendors.uncatalogued': '未收录',
 } as const
 
-export type UmbraLocaleKey = keyof typeof zh
+export type StewardLocaleKey = keyof typeof zh
 
-export const en: Record<UmbraLocaleKey, string> = {
+export const en: Record<StewardLocaleKey, string> = {
   'ball.open': 'Open the model matrix',
   'ball.close': 'Collapse the model matrix',
   'ball.badge': 'Spent today',
-  'panel.title': 'Umbra model matrix',
+  'panel.title': 'Steward model matrix',
   'panel.subtitle': 'Routes by task nature; falls back on failure',
   'panel.close': 'Close',
   'panel.reload': 'Reload configuration',
@@ -88,7 +101,7 @@ export const en: Record<UmbraLocaleKey, string> = {
   'agents.idle': 'idle',
   'panel.error': 'Error',
   'settings.nav': 'Model matrix',
-  'settings.title': 'Umbra model matrix',
+  'settings.title': 'Steward model matrix',
   'settings.description': 'Model pool, routing mode, and gateway wiring',
   'settings.poolPath': 'Configuration file',
   'settings.gateway': 'Gateway base URL',
@@ -99,4 +112,17 @@ export const en: Record<UmbraLocaleKey, string> = {
   'settings.mode': 'Default mode',
   'settings.retainDays': 'Ledger retention (days)',
   'settings.hint': 'Point llm-pi-ai baseURL at the gateway and apiKeyEnv at an environment variable holding the local token.',
+  'vendors.title': 'Vendor configuration',
+  'vendors.tabCustom': 'Custom',
+  'vendors.apiKey': 'API Key',
+  'vendors.baseUrl': 'Base URL',
+  'vendors.keyPlaceholder': 'paste key (only a mask is shown after saving)',
+  'vendors.anthropicWarning': 'Anti-ban warning: strongly discouraged to bind an official account directly - bans are likely. Use a third-party relay (Base URL) with its key.',
+  'vendors.fetch': 'Test connection and fetch models',
+  'vendors.fetchFailed': 'fetch failed',
+  'vendors.save': 'Save vendor',
+  'vendors.saved': 'saved (the model matrix rebuilds automatically)',
+  'vendors.noGateway': 'gateway is not running: wire it up below and restart DSH first',
+  'vendors.manualIds': 'Model IDs, one per line',
+  'vendors.uncatalogued': 'uncatalogued',
 }

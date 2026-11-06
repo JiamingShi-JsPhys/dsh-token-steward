@@ -1,4 +1,4 @@
-# dsh-umbra-budget · 架构设计（阶段一输出）
+# dsh-token-steward · 架构设计（阶段一输出）
 
 > 证据来自 DeepSeek Harness 生态参考源码（`dsh-provider-proxy`、`dsh-usage`、`dsh-client-ui-pet`，均可在 GitHub 与 npm 检索）与本机已安装插件，逐条标出处。
 
@@ -25,14 +25,14 @@
 │  agent loop / subagent ──► ctx.llm ──► llm-pi-ai 适配器      │
 │                                        │ baseURL 指向 ↓      │
 │                              ┌─────────▼──────────┐          │
-│                              │ Umbra 网关         │ 127.0.0.1 │
+│                              │ Steward 网关         │ 127.0.0.1 │
 │                              │ /v1/chat/completions│ 随机端口  │
 │                              └─────────┬──────────┘          │
 │                                        │ 路由引擎 + 健康状态机 │
-│  umbra-budget host 插件 ───────────────┘                     │
+│  token-steward host 插件 ───────────────┘                     │
 │    · 读 model_pool.yaml（fs.watch 热重载）                    │
 │    · RouterEngine.plan/report（纯逻辑，可单测）               │
-│    · 计量台账 + HTTP 路由 api/umbra-budget/*                  │
+│    · 计量台账 + HTTP 路由 api/token-steward/*                  │
 └─────────────────────────────────────────────────────────────┘
                           ▲ 同源 JSON
 ┌─────────────────────────┴───────────────────────────────────┐
@@ -54,15 +54,15 @@
 
 ## 2. 虚拟模型 id（网关如何被 DSH 使用）
 
-网关对宿主暴露成**一个** OpenAI 兼容 provider（`umbra`），模型 id 用两段式命名：
+网关对宿主暴露成**一个** OpenAI 兼容 provider（`steward`），模型 id 用两段式命名：
 
 ```
-umbra:auto               ← 按当前全局模式自动选路（默认，UI 切换模式即切它）
-umbra:frugal             ← 钉死极致便宜
-umbra:efficiency         ← 钉死效率优先
-umbra:max_power          ← 钉死最强火力
-umbra:alias/<name>       ← YAML 里 routing.aliases 的自定义意图，如 umbra:alias/analysis
-umbra:pin/<provider>/<model>  ← 直通某具体模型（逃生门，仍走熔断与计量）
+steward:auto               ← 按当前全局模式自动选路（默认，UI 切换模式即切它）
+steward:frugal             ← 钉死极致便宜
+steward:balanced         ← 钉死效率优先
+steward:max_power          ← 钉死最强火力
+steward:alias/<name>       ← YAML 里 routing.aliases 的自定义意图，如 steward:alias/analysis
+steward:pin/<provider>/<model>  ← 直通某具体模型（逃生门，仍走熔断与计量）
 ```
 
 这样 profile 里只需要一行配置；同时保留「想钉就钉」的能力：
@@ -72,19 +72,19 @@ umbra:pin/<provider>/<model>  ← 直通某具体模型（逃生门，仍走熔�
   name: '@deepseek-ai/dsh-llm-pi-ai'
   config:
     providers:
-      umbra:
-        displayName: Umbra Matrix
+      steward:
+        displayName: Steward Matrix
         api: openai-completions
-        apiKeyEnv: UMBRA_LOCAL_TOKEN      # 网关自己签发的 loopback 令牌
+        apiKeyEnv: STEWARD_LOCAL_TOKEN      # 网关自己签发的 loopback 令牌
         baseURL: http://127.0.0.1:<port>/v1
         models:
-          - { id: 'umbra:auto', name: 'Umbra Auto' }
-          - { id: 'umbra:frugal', name: 'Umbra Frugal' }
-          - { id: 'umbra:efficiency', name: 'Umbra Efficiency' }
-          - { id: 'umbra:max_power', name: 'Umbra Max Power' }
+          - { id: 'steward:auto', name: 'Steward Auto' }
+          - { id: 'steward:frugal', name: 'Steward Frugal' }
+          - { id: 'steward:balanced', name: 'Steward Efficiency' }
+          - { id: 'steward:max_power', name: 'Steward Max Power' }
 ```
 
-> **待验证 T1**：`llm-pi-ai` 是否接受含 `:` 的模型 id。若拒绝，退回下划线分段（`umbra__auto`）。一条 curl 探针即可定论。
+> **待验证 T1**：`llm-pi-ai` 是否接受含 `:` 的模型 id。若拒绝，退回下划线分段（`steward__auto`）。一条 curl 探针即可定论。
 
 ## 3. 配置层：`model_pool.yaml`
 
@@ -186,7 +186,7 @@ src/
     gateway.ts             loopback HTTP 服务、上游转发、SSE 直通、降级重试
     usage-bridge.ts        读 dsh-usage 台账（可选服务，缺席即降级）
     route-ledger.ts        路由事件环形缓冲 + 持久化
-    routes.ts              api/umbra-budget/{snapshot,mode,pool,route-log}
+    routes.ts              api/token-steward/{snapshot,mode,pool,route-log}
     dsh-home.ts            ┐ shared/host 同步副本
     loopback.ts            ┘
 ```
@@ -195,7 +195,7 @@ src/
 
 | # | 假设 | 探针 | 若不成立的退路 |
 |---|---|---|---|
-| T1 | `llm-pi-ai` 接受含 `:` 的模型 id | 临时 profile 加一条 `umbra__auto` / `umbra:auto` 对拍 | 改下划线分段 |
+| T1 | `llm-pi-ai` 接受含 `:` 的模型 id | 临时 profile 加一条 `steward__auto` / `steward:auto` 对拍 | 改下划线分段 |
 | T2 | 网关可作为 `baseURL` 被 `llm-pi-ai` 使用（含流式 SSE 解析） | 起最小 echo 网关，回一段假 SSE，跑一次会话 | 改用 `llm/stream` ALS 方案（只能覆盖模型轴，功能缩水） |
 | T3 | 上游 `usage` 字段在流式末尾出现（`stream_options.include_usage`） | 对每个真实上游发一次带该参数的请求 | 计量退化为按字符估 |
 | T4 | `dsh-usage` 台账结构稳定 | 直接读本机现有 `usage-ledger.json` | 自建台账（会双算，需明说） |

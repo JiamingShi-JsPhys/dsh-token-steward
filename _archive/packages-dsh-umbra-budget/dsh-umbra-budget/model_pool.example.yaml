@@ -1,0 +1,56 @@
+# ====================================================================
+# dsh-umbra-budget · 模型矩阵定义（示例）
+# 首次启动会自动把此内容播种到 $DSH_HOME/umbra-budget/model_pool.yaml；
+# 修改保存后自动热重载；校验失败整体拒绝并保留旧池（fail-closed）。
+# 密钥绝不写明文：一律 api_key_ref: env:名称，从环境变量解析。
+# ====================================================================
+version: 1
+
+defaults:
+  cost_level: medium
+  availability: direct
+
+providers:
+  # ---- A 轨：引用 DSH 设置里已配置的 provider（推荐，协议适配交给宿主）----
+  deepseek:
+    display_name: DeepSeek 官方
+    models:
+      deepseek-chat:
+        tags:
+          capabilities: [coding, fast, agent, tool_use]
+          cost_level: low
+          context_window: 131072
+        pricing: { currency: CNY, input: 2.0, output: 8.0, cache_read: 0.5, cache_write: 2.0 }
+      deepseek-reasoner:
+        tags:
+          capabilities: [reasoning, coding]
+          cost_level: medium
+          context_window: 131072
+        pricing: { currency: CNY, input: 4.0, output: 16.0 }
+
+  # ---- B 轨：直连任意 OpenAI 兼容端点（免费源/镜像源）----
+  school:
+    display_name: 学校免费源
+    models:
+      glm-4-flash:
+        tags:
+          capabilities: [fast, agent]
+          cost_level: free
+          context_window: 128000
+        endpoint: https://school-mirror.example/v1
+        api_key_ref: env:SCHOOL_MIRROR_KEY
+
+routing:
+  mode: frugal                # frugal | efficiency | max_power
+  classifier:
+    trivial_max_chars: 2000   # ≤ 此长度且无工具 → trivial（最便宜模型处理）
+    heavy_min_chars: 60000    # ≥ 此长度 / 带工具 / reasoning=high → heavy
+    heavy_tools: true
+  fallback:
+    max_retries: 2            # 首 chunk 前失败的最大换模次数
+    cooldown_ms: 30000        # 熔断冷却
+    rate_limit_429_ms: 60000  # 429 专属冷却（有 Retry-Then 时取更大值）
+  scatter:
+    efficiency_min_inflight: 2  # 同模型在途 ≥2 时开始打散（idea_swarm 并发场景）
+  cache:
+    exact_match: false

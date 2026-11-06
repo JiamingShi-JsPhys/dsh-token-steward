@@ -1,5 +1,5 @@
 {
-  "name": "dsh-umbra-budget",
+  "name": "dsh-token-steward",
   "version": "1.0.0",
   "description": "Model matrix orchestrator for DeepSeek Harness: pool any OpenAI-compatible endpoint, route by task profile across frugal/efficiency/max-power modes, dynamic failover, local exact-match cache, usage ledger and a live console.",
   "type": "module",
@@ -68,12 +68,12 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
-  "author": "dsh-umbra-budget contributors",
+  "author": "dsh-token-steward contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://example.com/your-org/DSH-Umbra-Budget.git"
+    "url": "git+https://example.com/your-org/DSH-Steward-Budget.git"
   },
   "bugs": {
-    "url": "https://example.com/your-org/DSH-Umbra-Budget/issues"
+    "url": "https://example.com/your-org/DSH-Steward-Budget/issues"
   }
 }

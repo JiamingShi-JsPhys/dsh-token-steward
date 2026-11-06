@@ -2,15 +2,16 @@
 
 ## 1.0.0 — 2026-11-06
 
-首个可发布版本。架构基于 M0 探针对真实宿主（app.asar 182 MB）的实测结论：
+首个可发布版本（原名 dsh-umbra-budget，同版本内更名 **dsh-token-steward · Token 管家**）。
+架构基于 M0 探针对真实宿主（app.asar 182 MB）的实测结论：
 `llm-pi-ai` 适配器在构造 SDK 客户端时捕获 `fetch`、请求体深冻结，插件无法可靠
 改写「用哪个模型」——因此执行层是本地 OpenAI 兼容网关（只绑 127.0.0.1，
 随机端口 + 本地令牌），profile 里把 `llm-pi-ai` 的 `baseURL` 指过来即可。
 
 ### 网关（执行层）
 - OpenAI 兼容端点：`/v1/chat/completions`（流式 SSE 直通）、`/v1/models`、`/health`；
-- 虚拟模型 id：`umbra:auto` / `umbra:frugal` / `umbra:efficiency` / `umbra:max_power` /
-  `umbra:pin/<provider>/<model>` / `umbra:alias/<name>`，真实模型 id 直通（仍走熔断与计量）；
+- 虚拟模型 id：`steward:auto` / `steward:frugal` / `steward:balanced` / `steward:max_power` /
+  `steward:pin/<provider>/<model>` / `steward:alias/<name>`，真实模型 id 直通（仍走熔断与计量）；
 - 只绑回环、系统分配端口、常量时间令牌比较、凭据明文不出内存。
 
 ### 路由引擎（纯函数，全量单测）
@@ -47,6 +48,12 @@
 ### 质量
 - 358 条断言全绿（`npm test`，含构建，零外部服务）；`tsc --noEmit` 零错误
   （strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）；
+- **厂家配置中心（vendors.json）**：面板厂家 Tab（Anthropic/OpenAI/Google/DeepSeek/Alibaba/Moonshot/Zhipu/Xiaomi/MiniMax + Custom），
+  API Key + Base URL 表单，Anthropic 固定红字防封警告；「测试连接并拉取模型」经网关 GET /v1/models?vendor=|base_url= 探测上游，
+  勾选启用后整表落 0600 的 vendors.json 并即时重建矩阵；
+- **六维评分路由**：reasoning/longContext/coding/agentic/proWork/factuality 六维（数值 + 字母评级为独立事实字段，逐字录入 30 模型），
+  intent 推断主维度（agentic/longContext/coding/reasoning），三模式以主维度分为主序（frugal 有够用线沉底）；
+- 模型卡展示 [TIER] 徽标与 R/L/C/A/P/F 六维数值框；能力标签为大写等宽 + 1px 实线（无 Emoji）；
 - `lib/index.js`（ESM）+ `lib/client.js`（`window.__ModuleLoader__` 闭包，CSS 内联），
   产物验收走行为（`new Function` 伪 window 真跑 client bundle）而非文本 grep；
 - `probes/` 保留全部 M0 探针（asar 抽取 / 网关回路 / usage 桶 / 冒号模型 id）可原样复跑，
