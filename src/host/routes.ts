@@ -66,6 +66,7 @@ export interface VendorView {
   hasKey: boolean
   apiKeyMasked: string
   enabledModels: string[]
+  modelTags: Record<string, string[]>
 }
 
 /** 面板路由需要的数据面。 */

@@ -51,6 +51,8 @@ interface VendorDraft {
   customUrl: string
   apiKey: string
   enabledModels: string[]
+  /** 用户给模型打的擅长标签（AI 调控可读）。 */
+  modelTags: Record<string, string[]>
 }
 
 /** 设置页。 */
@@ -200,6 +202,7 @@ function VendorsSection(props: {
       customUrl: view?.customUrl ?? '',
       apiKey: '',
       enabledModels: view?.enabledModels ?? [],
+      modelTags: {},
     }
   }
 
@@ -254,6 +257,7 @@ function VendorsSection(props: {
       // 空串 = 保留已存明文（掩码回显绝不回传）。
       apiKey: draft.apiKey,
       enabledModels: [...draft.enabledModels],
+      modelTags: { ...draft.modelTags },
     }
     void view
     // 保留模式跟随当前全局模式（模式切换有自己的持久化通道）。
@@ -354,7 +358,7 @@ function VendorsSection(props: {
       </div>
 
       {checkList.length > 0 ? (
-        <div className={css.modelCheckList} data-dsh-part="vendor-models">
+        <div className={css.modelCardGrid} data-dsh-part="vendor-models">
           {checkList.map((entry) => {
             // 标注来自本地静态目录（与宿主同源），匹配走归一化（上游 id 与目录 id 的分隔符可能不同）。
             const activeTemplate = PROVIDER_TEMPLATES.find((vendor) => vendor.vendorId === activeTab)
@@ -366,28 +370,38 @@ function VendorsSection(props: {
             const multimodal = template?.imageInput === true || template?.imageOutput === true || template?.videoOutput === true
               || template?.capabilities.includes('vision') === true
             if (multimodal) badges.unshift(t('models.multimodal'))
+            const enabled = draft.enabledModels.includes(entry.id)
+            const userTags = draft.modelTags[entry.id] ?? []
             return (
-              <label key={entry.id} className={css.modelCheckRow}>
+              <label key={entry.id} className={css.modelSwitchCard} data-on={enabled ? 'true' : 'false'}>
                 <input
                   type="checkbox"
-                  checked={draft.enabledModels.includes(entry.id)}
+                  checked={enabled}
                   onChange={() => { toggleModel(activeTab, entry.id) }}
                 />
-                <span className={css.modelCheckBody}>
-                  <span className={css.modelCheckLine}>
-                    <span className={css.modelCheckName}>{entry.name}</span>
-                    <code className={css.modelCheckId}>{entry.id}</code>
-                    <span className={css.modelCheckTier}>{entry.inCatalog ? '[' + entry.tier + ']' : '[' + t('vendors.uncatalogued') + ']'}</span>
-                  </span>
-                  {badges.length > 0 ? (
-                    <span className={css.modelCheckBadges}>
-                      {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
-                    </span>
-                  ) : null}
-                  {template?.strengths !== undefined ? (
-                    <span className={css.modelCheckStrengths}>{t('models.strengths')}: {template.strengths}</span>
-                  ) : null}
+                <span className={css.modelSwitchHead}>
+                  <span className={css.modelSwitchName}>{entry.name}</span>
+                  {enabled ? <span className={css.modelSwitchOn}>{t('vendors.enabledTag')}</span> : null}
                 </span>
+                {badges.length > 0 ? (
+                  <span className={css.modelCheckBadges}>
+                    {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
+                  </span>
+                ) : null}
+                {template?.strengths !== undefined ? (
+                  <span className={css.modelSwitchStrengths}>{template.strengths}</span>
+                ) : null}
+                <code className={css.modelCheckId}>{entry.id}</code>
+                <input
+                  className={css.vendorInput}
+                  value={userTags.join(', ')}
+                  placeholder={t('vendors.tagPlaceholder')}
+                  onClick={(event) => { event.preventDefault() }}
+                  onChange={(event) => {
+                    const tags = event.target.value.split(/[,，]/).map((tag) => tag.trim()).filter((tag) => tag !== '')
+                    updateDraft(activeTab, { modelTags: { ...draft.modelTags, [entry.id]: tags } })
+                  }}
+                />
               </label>
             )
           })}

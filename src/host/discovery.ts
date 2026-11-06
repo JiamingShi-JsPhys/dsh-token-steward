@@ -12,6 +12,10 @@ export interface DiscoveredEntry {
   name: string
   tier: string
   inCatalog: boolean
+  /** 擅长一句话（目录命中才有）。 */
+  strengths?: string
+  /** 擅长标签（机器可读，AI 调控用）。 */
+  strength_tags?: string[]
   owned_by: string
 }
 
@@ -73,6 +77,8 @@ export async function discoverUpstreamModels(vendorId: string, baseUrl: string, 
       name: known?.name ?? id,
       tier: known?.tier ?? 'NA',
       inCatalog: known !== undefined,
+      ...(known?.strengths !== undefined ? { strengths: known.strengths } : {}),
+      ...(known?.strengthTags !== undefined ? { strength_tags: [...known.strengthTags] } : {}),
       owned_by: 'upstream',
     }
   })

@@ -69,6 +69,11 @@ export function modelInfoToEntry(info: ModelInfo): ModelEntry {
     dimensions: { ...scores } as DimensionSet,
     costPer1kInput: info.costPer1kInput,
     costPer1kOutput: info.costPer1kOutput,
+    ...(info.strengths !== undefined ? { strengths: info.strengths } : {}),
+    ...(info.strengthTags !== undefined ? { strengthTags: [...info.strengthTags] } : {}),
+    ...(info.imageInput === true ? { imageInput: true } : {}),
+    ...(info.imageOutput === true ? { imageOutput: true } : {}),
+    ...(info.videoOutput === true ? { videoOutput: true } : {}),
   }
 }
 
@@ -104,7 +109,12 @@ export function synthesizePool(vendors: VendorConfig[], mode: PoolConfig['routin
     const models = vendor.enabledModels
       .map((modelId) => {
         const known = template !== undefined ? matchTemplateModel(template, modelId) : undefined
-        const info = template !== undefined && known !== undefined ? templateModelToInfo(template, known) : unknownModelInfo(modelId)
+        const base = template !== undefined && known !== undefined ? templateModelToInfo(template, known) : unknownModelInfo(modelId)
+        // 用户在面板里给模型打的标签：与目录标签合并（去重），AI 调控可读。
+        const userTags = vendor.modelTags?.[modelId]
+        const info: ModelInfo = userTags !== undefined && userTags.length > 0
+          ? { ...base, strengthTags: [...(base.strengthTags ?? []), ...userTags.filter((tag) => !(base.strengthTags ?? []).includes(tag))] }
+          : base
         return modelInfoToEntry(info)
       })
     if (models.length === 0) continue

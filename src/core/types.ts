@@ -73,6 +73,16 @@ export interface ModelInfo {
   /** coding / reasoning / vision / image_gen / tool-use / fast … */
   capabilities: string[]
   scores: DimensionSet
+  /** 擅长什么（一句话，目录录入的公开定位）。 */
+  strengths?: string
+  /** 擅长标签（机器可读，给 AI 调控选路用）。 */
+  strengthTags?: string[]
+  /** 图片输入（多模态理解）。 */
+  imageInput?: boolean
+  /** 图片输出（文生图）。 */
+  imageOutput?: boolean
+  /** 视频输出（文生视频）。 */
+  videoOutput?: boolean
 }
 
 /**
@@ -90,6 +100,8 @@ export interface VendorConfig {
   apiKey: string
   /** 用户勾选启用的模型 id（来自 /v1/models 拉取或手填）。 */
   enabledModels: string[]
+  /** 用户给模型打的擅长标签（modelId → 标签数组），AI 调控可读。 */
+  modelTags?: Record<string, string[]>
 }
 
 /* ────────────────────────────── 配置层 ────────────────────────────── */
@@ -134,6 +146,11 @@ export interface ModelEntry {
   dimensions?: DimensionSet
   costPer1kInput?: number | null
   costPer1kOutput?: number | null
+  strengths?: string
+  strengthTags?: string[]
+  imageInput?: boolean
+  imageOutput?: boolean
+  videoOutput?: boolean
 }
 
 /** 一个 OpenAI 兼容上游（YAML: providers[]）。 */
@@ -388,6 +405,7 @@ export interface ModelCardView {
   /** 六维评分；legacy 配置为 undefined，卡片不渲染数值框。 */
   dimensions?: DimensionSet
   strengths?: string
+  strengthTags?: string[]
   imageInput?: boolean
   imageOutput?: boolean
   videoOutput?: boolean

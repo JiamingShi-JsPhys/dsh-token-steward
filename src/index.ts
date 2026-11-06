@@ -311,12 +311,15 @@ export async function apply(ctx: {
         // 而不是「上一次轮询的那一版」。绝不能只在 apply 时预热一次——那样
         // dsh-usage 在启动之后写入的数据将永远不可见。
         await usageNow(now)
+        const poolState = usingVendors
+          ? { status: 'ok' as const, source: 'vendors.json' }
+          : loader.state()
         return router === undefined
-          ? emptySnapshot(now, loader.state())
+          ? emptySnapshot(now, poolState)
           : router.snapshot(now, {
             usage: usageCache.facts as never,
             usageAvailable: usageCache.available,
-            pool: loader.state(),
+            pool: poolState,
           })
       },
       setMode: (mode: RoutingMode) => {
@@ -349,6 +352,7 @@ export async function apply(ctx: {
           hasKey: vendor.apiKey !== '',
           apiKeyMasked: maskKey(vendor.apiKey),
           enabledModels: [...vendor.enabledModels],
+          modelTags: { ...(vendor.modelTags ?? {}) },
         })),
       }),
       saveVendors: (mode, input) => saveVendors(mode, input),

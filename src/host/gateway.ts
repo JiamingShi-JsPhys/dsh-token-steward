@@ -214,10 +214,21 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       }
       const config = options.config()
       const ids = publishedModelIds(config)
+      // AI 可读：每个模型带擅长描述与标签（真实上游模型才有多余信息）。
+      const byId = new Map(config?.providers.flatMap((provider) => provider.models.map((model) => [provider.provider_name + '/' + model.id, model] as const)) ?? [])
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify({
         object: 'list',
-        data: ids.map((id) => ({ id, object: 'model', owned_by: id.startsWith('steward:') ? 'token-steward' : 'upstream' })),
+        data: ids.map((id) => {
+          const model = byId.get(id)
+          return {
+            id,
+            object: 'model',
+            owned_by: id.startsWith('steward:') ? 'token-steward' : 'upstream',
+            ...(model?.strengths !== undefined ? { strengths: model.strengths } : {}),
+            ...(model?.strengthTags !== undefined ? { strength_tags: [...model.strengthTags] } : {}),
+          }
+        }),
       }))
       return
     }

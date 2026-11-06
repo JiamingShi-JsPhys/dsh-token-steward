@@ -89,6 +89,7 @@ export interface ModelCardFace {
   costLevel: ModelCardView['costLevel']
   health: ModelCardView['health']
   strengths: string | undefined
+  strengthTags: string[] | undefined
   imageInput: boolean
   imageOutput: boolean
   videoOutput: boolean
@@ -141,6 +142,7 @@ export function modelCardFace(card: ModelCardView, now: number): ModelCardFace {
     cacheText: formatPercent(card.cacheHitRate),
     unpriced: card.todayCost === null,
     strengths: card.strengths,
+    strengthTags: card.strengthTags,
     imageInput: card.imageInput === true,
     imageOutput: card.imageOutput === true,
     videoOutput: card.videoOutput === true,

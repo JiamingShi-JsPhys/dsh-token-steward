@@ -29,7 +29,6 @@ export function ModelCard(props: ModelCardProps): ReactNode {
     >
       <div className={css.cardHead}>
         <span className={css.cardName} title={face.provider + ' / ' + face.model}>{face.displayName}</span>
-        {props.card.tier !== undefined ? <span className={css.tierBadge}>[{props.card.tier}]</span> : null}
         <span className={css.statusDot} aria-hidden="true" />
       </div>
 
@@ -56,7 +55,12 @@ export function ModelCard(props: ModelCardProps): ReactNode {
       </div>
 
       {face.strengths !== undefined ? (
-        <div className={css.strengths} data-dsh-part="strengths">{props.t('models.strengths')}: {face.strengths}</div>
+        <div className={css.strengths} data-dsh-part="strengths">{face.strengths}</div>
+      ) : null}
+      {face.strengthTags !== undefined && face.strengthTags.length > 0 ? (
+        <div className={css.chips}>
+          {face.strengthTags.map((tag) => <span key={tag} className={css.chip}>{tag}</span>)}
+        </div>
       ) : null}
 
       <div className={css.cardStats}>
