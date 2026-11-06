@@ -14,6 +14,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode, VendorConfig } from '../core/types.ts'
 import type { StewardRouter } from '../core/router.ts'
 import { inferIntent } from '../core/intent.ts'
@@ -53,6 +54,22 @@ export interface GatewayOptions {
   now?(): number
   /** 绑定端口；0 表示由系统分配（默认）。 */
   port?: number
+  /** gateway.json 的路径；提供时复用已持久化的令牌（跨重启稳定接线）。 */
+  statePath?: string
+}
+
+/** 从既有 gateway.json 里读回令牌（文件缺失或损坏返回 undefined）。 */
+async function readPersistedToken(statePath: string | undefined): Promise<string | undefined> {
+  if (statePath === undefined) return undefined
+  try {
+    const text = await readFile(statePath, 'utf8')
+    const parsed = JSON.parse(text) as { token?: unknown }
+    const token = parsed.token
+    if (typeof token === 'string' && token.length >= 32) return token
+  } catch {
+    // 不存在或损坏 → 生成新令牌。
+  }
+  return undefined
 }
 
 /** 网关句柄。 */
@@ -144,7 +161,10 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
   const log = options.log ?? (() => {})
   const fetchImpl: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init as RequestInit))
   const now = options.now ?? (() => Date.now())
-  const token = generateToken()
+  // 令牌持久化：复用 gateway.json 里已有的令牌（llm-pi-ai 的 apiKeyEnv 是静态
+  // 环境变量，令牌换了接线就断）。只在文件缺失或令牌非法时生成新的。
+  const persisted = await readPersistedToken(options.statePath)
+  const token = persisted ?? generateToken()
 
   // ── 本地精确响应缓存（routing.cache.exact_match，默认关闭）────────
   // 命中即回放上次响应字节：不出站、不计费、不进健康状态机。

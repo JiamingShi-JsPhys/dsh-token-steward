@@ -20,4 +20,4 @@
         # 面板读取 dsh-usage 台账的间隔（毫秒，最小 2000）。
         usagePollMs: 15000
         # 网关端口。0 = 由系统分配（推荐：不会与任何已有服务抢端口）。
-        gatewayPort: 0
+        gatewayPort: 51741

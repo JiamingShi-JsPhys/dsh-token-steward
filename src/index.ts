@@ -140,6 +140,16 @@ export async function apply(ctx: {
   webServer?: { register(route: unknown): () => void }
   effect?: (fn: () => () => void, label?: string) => void
 }, config?: StewardConfigFields): Promise<void> {
+  // 落盘自诊断第一站：Desktop 宿主不捕获 stdout，apply 是否被调用、在哪一步
+  // 失败，只有写进文件才能从外部看见（provider-proxy 的 state.json 同款）。
+  try {
+    const { mkdir } = await import('node:fs/promises')
+    const dir = join(dataDirectory())
+    await mkdir(dir, { recursive: true })
+    await writeFileAtomic(join(dir, 'state.json'), JSON.stringify({ appliedAt: Date.now(), pid: process.pid, status: 'mounting' }, null, 2) + String.fromCharCode(10))
+  } catch {
+    // 诊断写不进去也不阻断挂载。
+  }
   const settings = resolveConfig(config)
   const log = ctx.logger?.('token-steward') ?? { info() {}, warn() {}, error() {} }
   if (!settings.enabled) {
@@ -268,6 +278,7 @@ export async function apply(ctx: {
         ledger,
         log: (level, message) => { log[level]('%s', message) },
         port: settings.gatewayPort,
+        statePath,
       })
       const state: GatewayState = {
         appliedAt: Date.now(),
