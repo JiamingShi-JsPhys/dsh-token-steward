@@ -54,9 +54,6 @@ export function ModelCard(props: ModelCardProps): ReactNode {
         {face.unpriced ? <span className={css.chip} data-unpriced="true">{props.t('models.unpriced')}</span> : null}
       </div>
 
-      {face.strengths !== undefined ? (
-        <div className={css.strengths} data-dsh-part="strengths">{face.strengths}</div>
-      ) : null}
       {face.strengthTags !== undefined && face.strengthTags.length > 0 ? (
         <div className={css.chips}>
           {face.strengthTags.map((tag) => <span key={tag} className={css.chip}>{tag}</span>)}

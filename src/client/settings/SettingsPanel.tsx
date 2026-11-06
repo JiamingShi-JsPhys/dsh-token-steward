@@ -388,9 +388,6 @@ function VendorsSection(props: {
                     {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
                   </span>
                 ) : null}
-                {template?.strengths !== undefined ? (
-                  <span className={css.modelSwitchStrengths}>{template.strengths}</span>
-                ) : null}
                 <code className={css.modelCheckId}>{entry.id}</code>
                 <input
                   className={css.vendorInput}
