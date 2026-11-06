@@ -152,7 +152,18 @@ export interface StewardRouter {
  * @param options - 可调参数；缺省取 config.defaults。
  * @param mode - 初始模式；缺省取 config.routing.mode。
  */
-export function createRouter(config: PoolConfig, options?: Partial<RouterOptions>, mode?: RoutingMode): StewardRouter {
+/**
+ * 建一个路由引擎。
+ * @param startRevision - 起始快照序号。宿主重建引擎（保存厂家配置、删厂家、重读配置）
+ *   时必须接着上一次的序号往下走：面板客户端会把「revision 变小」当成更早请求的
+ *   迟到响应丢掉，序号归零就等于让面板永远停在旧快照上。
+ */
+export function createRouter(
+  config: PoolConfig,
+  options?: Partial<RouterOptions>,
+  mode?: RoutingMode,
+  startRevision = 0,
+): StewardRouter {
   const resolved: RouterOptions = {
     maxAttempts: options?.maxAttempts ?? config.defaults.max_attempts,
     cooldownMs: options?.cooldownMs ?? config.defaults.cooldown_ms,
@@ -164,7 +175,7 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
   for (const entry of models) healths.set(entry.key, createHealth(0))
 
   let currentMode: RoutingMode = mode ?? config.routing.mode
-  let revision = 0
+  let revision = startRevision
   let degradedRequests = 0
   const recent: RouteEventView[] = []
   const agents = new Map<string, AgentRouteView>()

@@ -267,7 +267,11 @@ export async function apply(ctx: {
   let vendorDoc: VendorsDocument = await vendorStore.load()
   let usingVendors = vendorDoc.vendors.length > 0
   let configValue: PoolConfig | undefined = currentPool()
-  let router: StewardRouter | undefined = configValue === undefined ? undefined : createRouter(configValue)
+  /** 面板快照序号的宿主侧游标：重建路由时把它传给新引擎，保证只增不减。 */
+  let panelRevision = 0
+  let router: StewardRouter | undefined = configValue === undefined
+    ? undefined
+    : createRouter(configValue, undefined, undefined, panelRevision)
 
   /** 当前生效配置：厂家面板有内容时以 vendors.json 合成，否则回退 yaml。 */
   function currentPool(): PoolConfig | undefined {
@@ -295,7 +299,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('vendors saved (%d configured, %d routable)', merged.length, merged.filter(vendorIsRoutable).length)
     return { ok: true }
@@ -309,7 +313,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('vendor %s removed', vendorId)
     return { ok: true }
@@ -357,7 +361,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('imported %d providers from DSH profiles', incoming.length)
     return { ok: true, imported: incoming.map((vendor) => vendor.vendorId) }
@@ -437,14 +441,14 @@ export async function apply(ctx: {
     usingVendors = vendorDoc.vendors.length > 0
     if (usingVendors) {
       configValue = currentPool()
-      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
       await refreshSecrets()
       return { ok: true, status: 'ok' }
     }
     const result = await loader.load(now)
     if (result.ok && result.config !== undefined) {
       configValue = result.config
-      router = createRouter(configValue, undefined, router?.getMode())
+      router = createRouter(configValue, undefined, router?.getMode(), panelRevision)
       for (const warning of result.warnings) log.warn('config: %s', warning)
     }
     const state = loader.state()
@@ -567,8 +571,11 @@ export async function apply(ctx: {
           ? { status: 'ok' as const, source: 'vendors.json' }
           : loader.state()
         const cache = gateway === undefined ? undefined : await gateway.cacheStats(now)
-        if (router === undefined) return emptySnapshot(now, poolState)
-        return router.snapshot(now, {
+        if (router === undefined) {
+          panelRevision += 1
+          return emptySnapshot(now, poolState, panelRevision)
+        }
+        const snapshot = router.snapshot(now, {
           usage: usageCache.facts as never,
           usageAvailable: usageCache.available,
           pool: poolState,
@@ -580,6 +587,8 @@ export async function apply(ctx: {
               cacheSavings: { tokens: cache.savedTokens, cost: cache.savedCost, cacheHits: cache.cacheHitsToday },
             }),
         })
+        panelRevision = Math.max(panelRevision, snapshot.revision)
+        return snapshot
       },
       setMode: (mode: RoutingMode) => {
         if (router === undefined) return false
@@ -665,7 +674,7 @@ export async function apply(ctx: {
       vendorDoc = { ...vendorDoc, vendors }
       usingVendors = vendorDoc.vendors.length > 0
       configValue = currentPool()
-      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
       await vendorStore.save(vendorDoc)
       await refreshSecrets()
     },
@@ -776,9 +785,9 @@ function gatewayModelIds(config: PoolConfig | undefined): string[] {
 }
 
 /** 没有任何可用配置时的空快照，保证面板永远拿到完整形状。 */
-function emptySnapshot(now: number, pool: { status: string, source: string, error?: string }): unknown {
+function emptySnapshot(now: number, pool: { status: string, source: string, error?: string }, revision: number): unknown {
   return {
-    revision: now,
+    revision,
     mode: 'frugal',
     updatedAt: now,
     usageAvailable: false,

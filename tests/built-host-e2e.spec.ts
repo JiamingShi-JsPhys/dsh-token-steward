@@ -182,14 +182,23 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
       const persisted = await readFile(join(home, 'token-steward', 'model_pool.yaml'), 'utf8')
       assert.match(persisted, /mode: max_power/)
 
+      const beforeReload = await (await fetch(base + '/snapshot')).json() as { snapshot: { revision: number } }
+
       const reload = await fetch(base + '/reload', { method: 'POST' })
       const reloadBody = await reload.json() as { ok: boolean, status: string }
       assert.equal(reloadBody.ok, true)
       assert.equal(reloadBody.status, 'ok')
 
       const afterReload = await fetch(base + '/snapshot')
-      const afterBody = await afterReload.json() as { snapshot: { mode: string } }
+      const afterBody = await afterReload.json() as { snapshot: { mode: string, revision: number } }
       assert.equal(afterBody.snapshot.mode, 'max_power', '重载后应当沿用刚才的模式')
+      // 重载会重建路由引擎；序号必须接着上一次往下走，否则面板客户端把它当成
+      // 迟到的旧响应丢掉，白嫖列表会一直停在重载前的入池结果。
+      assert.ok(
+        afterBody.snapshot.revision > beforeReload.snapshot.revision,
+        '重建路由后快照序号必须继续增长（收到 ' + String(afterBody.snapshot.revision)
+          + '，之前是 ' + String(beforeReload.snapshot.revision) + '）',
+      )
     } finally {
       await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
     }
