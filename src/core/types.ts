@@ -291,6 +291,16 @@ export interface RouteIntent {
   burstKey: string
   /** 虚拟 id 解析出的别名名，用于解释「为什么选了它」。 */
   aliasName?: string
+  /**
+   * 会话键（session_id / user）。同一会话的连续请求共享它：
+   * 路由据此做「模型粘性」，避免每轮换人把前缀缓存和输出风格全部打散。
+   */
+  conversationKey?: string
+  /**
+   * 请求档位。`subagent` = 通过 `steward:subagent` 发来的子代理请求：
+   * 强制按 agentic 维度打分，并偏好「工具可靠 + 成本可控 + 窗口够大 + 能扛并发」。
+   */
+  profile?: 'subagent'
 }
 
 /** 一个候选模型及其排序依据。 */
@@ -397,6 +407,21 @@ export interface ScoreContext {
   now: number
   /** 同一 burstKey 已派给该模型的请求数（并发打散的依据）。 */
   burstLoad: number
+  /**
+   * 本会话上次成功服务的模型对象（同一份配置里的引用）。
+   * 打分器命中它时给一点粘性加分：不改变模式的胜负规则，只在接近的候选间
+   * 优先沿用同一个模型，保住上游的前缀缓存与输出风格。
+   */
+  stickyModel?: ModelEntry
+}
+
+/** 一次「只排名、不派发」的结果（Agent 选模型 / 面板解释用）。 */
+export interface RoutePreview {
+  mode: RoutingMode
+  /** 已按分数降序；最多 limit 条。 */
+  ranked: RouteCandidate[]
+  rejected: Array<{ provider: string; model: string; reason: string }>
+  notes: string[]
 }
 
 /** 一个模型的一次打分结果。 */

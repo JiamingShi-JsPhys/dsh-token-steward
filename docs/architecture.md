@@ -161,6 +161,36 @@ active ──(连续失败 ≥ threshold)──► open ──(half_open_after_m
 offline 由用户手动置位，不参与自动恢复
 ```
 
+### 4.4 子代理档位（1.1.0）
+
+子代理与主代理抢同一张矩阵，但需求不同：主代理要「最好」，子代理要「够好、便宜、接得住长前缀、一批同时跑不撞限流」。因此 `steward:subagent` 不落到三个模式上，而是走 `subagentScorer`：
+
+```
+score = 0.6 × agentic_quality + 0.4 × cost
+      + min(window/100k, 10) × 4
+      − min(latency_s, 20)
+      + sticky_bonus − inflight×200 − burst×20000
+      + (agentic_grade ≥ B+ ? 1e6 : 0)
+```
+
+- **B+ 门槛**先于一切：弱模型会把工具调用写坏、把半截结果当完成。
+- **成本占 0.4**：搜索型子任务用顶配模型是纯浪费；但质量仍是主项。
+- **窗口加分**：子代理继承父会话的已完成轮次，长前缀是常态。
+- **burst 罚分 20000**：与 balanced 同款，一批子代理自然落到不同上游。
+- **白嫖模式仍然生效**：硬过滤在打分之前，`not-free` 的模型根本进不了候选。
+- 打分器由 `scorerForIntent(mode, intent)` 选择；`intent.profile === 'subagent'` 时优先于模式。
+
+`preview()` 复用同一条 `rankAll()` 流水线但不动运行时状态，供 Agent 工具 `recommend_model` 与面板解释使用。
+
+### 4.5 换模型时的上下文继续（1.1.0）
+
+消息日志由 DSH 会话层完整保留，网关不改写历史内容；会损失的是上游前缀缓存与「上一家的私有字段」。两条对策都在网关/路由层，不需要 DSH 配合：
+
+1. **会话粘性**（router）：`conversationKey` 来自 `session_id` / `user`，与档位一起构成粘性表的键（`profile|session`），成功收口时记 `provider/model`，下一轮打分给 `stickyModel` 小额加分。LRU 512。
+2. **跨厂商归一化**（upstream，`normalizeCrossProviderBody`）：仅当目标 provider ≠ 上一轮服务的 provider 时，剥掉助手消息的 `reasoning_content` / `reasoning` / `reasoning_details`、content 里的 thinking 块与 `cache_control`；不原地改写客户端请求体（降级链上还要复用），只在出站副本上动手。
+
+KV 状态迁移需要模型内部状态，公开 `chat/completions` 协议不提供，本插件不做也不宣称。
+
 ## 5. 计量
 
 - **token 唯一真相源是 `dsh-usage` 的台账** `$DSH_HOME/dsh-usage/usage-ledger.json`（按日/按 provider/按 model，含 input/output/cacheRead/cacheWrite/reasoning 五个桶）。本机已有真实文件，不是假想。

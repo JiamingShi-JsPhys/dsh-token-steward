@@ -1,6 +1,41 @@
 # Changelog
 
 
+## 1.1.0 — 2026-11-07
+
+### 子代理档位 `steward:subagent`
+- 新增独立的选路档位（不是模式，不改全局档位）：`agentic` 质量 0.6 + 成本 0.4，
+  窗口每 100k +4 分（封顶 40），延迟最多 +20 分，burst 打散仍是决定性的，
+  再加上会话粘性 +300；agentic 维度 B+ 是硬门槛。
+- `parseVirtualModel` 认得 `steward:subagent` / `Steward Subagent` / `管家·子代理`；
+  `inferIntent` 对子代理请求强制按 `agentic` 打分（即使这一轮没带 tools）。
+- 网关 `/v1/models` 发布 6 个虚拟 id（补上 `steward:free`），并给每个虚拟 id
+  带上 `name` / `strengths` / `strength_tags`，模型发现与选择界面据此给出人话解释。
+- 接线：把 `dsh-tool-subagent` 的 `agentOptions` 设为
+  `{ provider: 'steward', model: 'steward:subagent' }`，之后所有子代理按这套规则选型。
+
+### Agent 选模咨询 `recommend_model`
+- `token_steward_manage` 新增动作：`action=recommend_model`，
+  可带 `profile=subagent` 与 `task="一句话任务"`，返回按真实意图推断排好序的
+  provider/model 与逐项理由；矩阵未加载时如实说明，不编造推荐。
+- 路由引擎新增 `preview()`：只排名、不派发，不占并发、不记 burst、不动健康状态机。
+
+### 换模型时的上下文继续
+- **会话粘性**：同一会话（`session_id` / agent id）成功服务过的模型，下一轮获得
+  小额加分（frugal +60 / balanced +300 / max_power +120），只在接近的候选之间生效；
+  按档位分开记（主子代理共用会话 id 也不串味）；LRU 上限 512 个会话。
+- **跨厂商请求归一化**：目标厂商 ≠ 上一轮服务的厂商时，剥掉助手消息上的
+  `reasoning_content` / `reasoning` / `reasoning_details`、content 里的
+  `thinking` / `redacted_thinking` 块与 `cache_control` 标记；系统提示与用户内容
+  一字不动，同一厂商内换模型保持原样。消息日志本身始终完整保留。
+- 窗口不够时仍是硬拒绝（`window-too-small`），绝不悄悄截断历史。
+- 明确写进 README：跨模型 KV 状态迁移在公开协议下做不到，以上是 API 层能拿到的全部收益。
+
+### 质量
+- 485 条断言全绿（新增子代理打分 / 粘性 / 只读预览 / 跨厂商归一化 / 虚拟 id 自述 /
+  `recommend_model`）；`tsc --noEmit` 零错误。
+
+
 ## 1.0.0 — 2026-11-06
 
 ### 终极整合（同日，仍为 1.0.0）

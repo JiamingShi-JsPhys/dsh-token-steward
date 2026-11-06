@@ -4,9 +4,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { executeStewardAction, type StewardToolDeps } from '../src/host/agent-tools.ts'
-import type { RoutingMode, VendorConfig } from '../src/core/types.ts'
+import type { RoutePreview, RoutingMode, VendorConfig } from '../src/core/types.ts'
 
-function deps(initial: VendorConfig[] = []) {
+function deps(initial: VendorConfig[] = [], recommend?: StewardToolDeps['recommend']) {
   let vendors: VendorConfig[] = initial.map((vendor) => ({ ...vendor }))
   let mode: RoutingMode = 'frugal'
   const calls: string[] = []
@@ -23,6 +23,7 @@ function deps(initial: VendorConfig[] = []) {
       },
       getMode: () => mode,
       gatewayBaseUrl: () => 'http://127.0.0.1:51741/v1',
+      recommend: recommend ?? (() => undefined),
     } as StewardToolDeps,
     calls,
     vendors: () => vendors,
@@ -48,6 +49,31 @@ test('show_status 返回模式/网关/厂商摘要，且不含密钥明文', asy
   assert.ok(out.includes('frugal'))
   assert.ok(out.includes('agnes'))
   assert.ok(!out.includes('sk-secret-123'), '密钥明文绝不回给 Agent')
+})
+
+test('recommend_model：把排序与理由回给 Agent，并给出子代理接法', async () => {
+  const preview: RoutePreview = {
+    mode: 'balanced',
+    ranked: [
+      { provider: 'midbox', model: 'fast-mid', score: 1_007_805, reasons: ['PROFILE:subagent', 'GATE:B+', 'STICKY:on'] },
+      { provider: 'premium', model: 'omni-pro', score: 1_006_505, reasons: ['PROFILE:subagent', 'GATE:B+'] },
+    ],
+    rejected: [],
+    notes: ['profile:subagent'],
+  }
+  const d = deps([], () => preview)
+  const out = await executeStewardAction(d.deps, { action: 'recommend_model', profile: 'subagent', task: '读仓库并改一个测试' })
+  assert.ok(out.includes('midbox/fast-mid'))
+  assert.ok(out.includes('GATE:B+'))
+  assert.ok(out.includes('子代理'))
+  // 要让推荐自动生效，告诉 Agent 该改哪一处配置。
+  assert.ok(out.includes('steward:subagent'))
+})
+
+test('recommend_model：矩阵未加载时说明原因，不编造推荐', async () => {
+  const d = deps()
+  const out = await executeStewardAction(d.deps, { action: 'recommend_model', profile: 'subagent' })
+  assert.ok(out.includes('还没加载'))
 })
 
 test('add_or_update_vendor：新厂商入库；已有厂商空 Key 保留明文', async () => {

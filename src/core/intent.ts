@@ -23,6 +23,17 @@ export const MODE_IDS: Record<string, RoutingMode> = {
   'steward:free': 'free',
 }
 
+/**
+ * 档位虚拟 id：不是「模式」，而是「这类请求的选路哲学」。
+ *
+ * `steward:subagent` 给子代理用：DSH 的 `dsh-tool-subagent` 可以把
+ * `agentOptions.model` 指到这里，于是所有子代理都按同一套「agentic 质量 +
+ * 成本 + 窗口 + 并发分散」的打分选模型，而不用主代理自己猜。
+ */
+export const PROFILE_IDS: Record<string, 'subagent'> = {
+  'steward:subagent': 'subagent',
+}
+
 /** 一段文本的粗略 token 估算：4 字符 ≈ 1 token。 */
 const CHARS_PER_TOKEN = 4
 
@@ -45,6 +56,7 @@ const FRIENDLY_IDS: Record<string, string> = {
   stewardbalanced: 'steward:balanced',
   stewardmaxpower: 'steward:max_power',
   stewardfree: 'steward:free',
+  stewardsubagent: 'steward:subagent',
 }
 
 /**
@@ -61,6 +73,8 @@ const CHINESE_IDS: Record<string, string> = {
   管家最强火力: 'steward:max_power',
   管家白嫖: 'steward:free',
   管家白嫖模式: 'steward:free',
+  管家子代理: 'steward:subagent',
+  管家子代理模式: 'steward:subagent',
 }
 
 /** 把 `管家·自动` / `Steward Auto` / `steward:auto` 统一成虚拟 id；其余原样返回。 */
@@ -80,6 +94,8 @@ export interface VirtualRoute {
   virtual: string
   /** 固定模式（auto 不固定）。 */
   mode?: RoutingMode
+  /** 档位（子代理等）；普通请求没有。 */
+  profile?: 'subagent'
   /** 直通的具体模型。 */
   pin?: { provider: string; model: string }
 }
@@ -88,7 +104,8 @@ export interface VirtualRoute {
  * 解析模型 id。
  *
  * 支持的形态：
- *   steward:auto / steward:frugal / steward:balanced / steward:max_power
+ *   steward:auto / steward:frugal / steward:balanced / steward:max_power / steward:free
+ *   steward:subagent（子代理档位）
  *   steward:pin/<provider>/<model>
  *   steward:alias/<name>
  *   其他任意 id → 直通（作为 provider/model 无法确定，交由网关查表）
@@ -101,6 +118,8 @@ export function parseVirtualModel(rawModelId: string): VirtualRoute {
   if (mode !== undefined) {
     return modelId === 'steward:auto' ? { virtual: modelId } : { virtual: modelId, mode }
   }
+  const profile = PROFILE_IDS[modelId]
+  if (profile !== undefined) return { virtual: modelId, profile }
   if (rest.startsWith('pin/')) {
     const parts = rest.slice(4).split('/')
     if (parts.length === 2 && parts[0] !== '' && parts[1] !== '') {
@@ -200,6 +219,26 @@ export function burstKeyOf(body: Record<string, unknown>, now: number, windowMs 
   return 'window:' + String(Math.floor(now / windowMs))
 }
 
+/**
+ * 会话键：用来识别「这是同一个会话的下一轮」，从而把模型粘住。
+ *
+ * 优先 `session_id`（DSH 的会话身份），其次 `conversation_id` / `chat_id`，
+ * 最后退回 `user`——DSH 的 pi-ai 适配器把 agent id 放在 `user` 里，
+ * 同一会话的多轮共享它。都没有就返回 undefined（不做粘性）。
+ */
+export function conversationKeyOf(body: Record<string, unknown>): string | undefined {
+  for (const field of ['session_id', 'conversation_id', 'chat_id', 'user'] as const) {
+    const value = body[field]
+    if (typeof value === 'string' && value !== '') return field + ':' + value
+  }
+  const metadata = body.metadata
+  if (typeof metadata === 'object' && metadata !== null) {
+    const nested = (metadata as Record<string, unknown>).session_id
+    if (typeof nested === 'string' && nested !== '') return 'session_id:' + nested
+  }
+  return undefined
+}
+
 /** 长上下文维度的判定门槛（粗估 token）。 */
 const LONG_CONTEXT_TOKENS = 24_000
 
@@ -250,15 +289,20 @@ export function inferIntent(body: Record<string, unknown>, modelId: string, now:
   if (needsTools && !requiredCapabilities.includes('tool-use')) requiredCapabilities.push('tool-use')
 
   const estimatedInput = estimateInputTokens(body)
+  const conversationKey = conversationKeyOf(body)
   const intent: RouteIntent = {
     requiredCapabilities,
     requiredModalities: inferModalities(body),
     estimatedInputTokens: estimatedInput,
     expectedOutputTokens: estimateOutputTokens(body),
     needsTools,
-    dimension: inferDimension(body, needsTools, estimatedInput),
+    // 子代理档位强制按 agentic 打分：子代理的工作就是「读、调工具、改、验」的循环，
+    // 即使这一轮恰好没带 tools（比如最后的总结），也仍按代理能力选人。
+    dimension: route.profile === 'subagent' ? 'agentic' : inferDimension(body, needsTools, estimatedInput),
     stream: body.stream === true,
     burstKey: burstKeyOf(body, now),
+    ...(conversationKey === undefined ? {} : { conversationKey }),
+    ...(route.profile === undefined ? {} : { profile: route.profile }),
   }
   if (route.virtual !== '') intent.aliasName = route.virtual
   return { intent, route }

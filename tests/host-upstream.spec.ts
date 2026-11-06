@@ -14,6 +14,7 @@ import {
   buildHeaders,
   dispatch,
   findRoute,
+  normalizeCrossProviderBody,
   rewriteBody,
   clampOutputToWindow,
   upstreamUrl,
@@ -368,4 +369,93 @@ test('白嫖模式的拒绝原因要带上「下一步该干什么」', () => {
   // 不是「全都不免费」时也别乱贴提示。
   const mixed = refusalMessage('free', [{ provider: 'p', model: 'm', reason: 'missing-capability:vision' }])
   assert.equal(mixed.includes('白嫖模式'), false)
+})
+
+/* ─────────────────── 换模型时的上下文继续（1.1.0） ─────────────────── */
+
+/** 一条带着上一家厂商私有字段的助手消息。 */
+function historyWithProviderFields(): Record<string, unknown> {
+  return {
+    model: 'x',
+    messages: [
+      { role: 'system', content: 'sys' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '先读文件' },
+          { type: 'text', text: '看过了', cache_control: { type: 'ephemeral' } },
+        ],
+        reasoning_content: '旧的思考过程',
+        reasoning_details: [{ type: 'reasoning.text', text: '旧的思考' }],
+        cache_control: { type: 'ephemeral' },
+      },
+      { role: 'user', content: '继续' },
+    ],
+  }
+}
+
+test('跨厂商归一化：换了一家才剥掉上一家的思考痕迹与缓存标记', () => {
+  const original = historyWithProviderFields()
+  const next = normalizeCrossProviderBody(original, 'strong', 'cheap')
+  const messages = next.messages as Array<Record<string, unknown>>
+  const assistant = messages[1] as Record<string, unknown>
+
+  assert.equal('reasoning_content' in assistant, false)
+  assert.equal('reasoning_details' in assistant, false)
+  assert.equal('cache_control' in assistant, false)
+  assert.deepEqual(assistant.content, [{ type: 'text', text: '看过了' }])
+  // 用户消息与系统提示原样保留。
+  assert.deepEqual(messages[2], { role: 'user', content: '继续' })
+  assert.deepEqual(messages[0], { role: 'system', content: 'sys' })
+  // 绝不原地改写客户端那份请求体：降级链上还有别的候选要用它。
+  const originalAssistant = (original.messages as Array<Record<string, unknown>>)[1] as Record<string, unknown>
+  assert.equal(originalAssistant.reasoning_content, '旧的思考过程')
+})
+
+test('跨厂商归一化：同一厂商内换模型不动，没有历史也不动', () => {
+  const body = historyWithProviderFields()
+  assert.equal(normalizeCrossProviderBody(body, 'cheap', 'cheap'), body)
+  assert.equal(normalizeCrossProviderBody(body, 'cheap', undefined), body)
+})
+
+test('跨厂商归一化：只剩思考块的消息 content 变成 null', () => {
+  const body = {
+    messages: [{ role: 'assistant', content: [{ type: 'thinking', thinking: '嗯' }] }],
+  }
+  const next = normalizeCrossProviderBody(body, 'b', 'a')
+  const assistant = (next.messages as Array<Record<string, unknown>>)[0] as Record<string, unknown>
+  assert.equal(assistant.content, null)
+})
+
+test('attemptOnce 的出站体：换厂商时已经归一化，同厂商时保持原样', async () => {
+  const config: PoolConfig = {
+    version: 1,
+    defaults: { timeout_ms: 5_000, max_attempts: 1, cooldown_ms: 1_000, failure_threshold: 3, half_open_after_ms: 1_000 },
+    routing: { mode: 'frugal', aliases: {}, agent_overrides: {}, cache: { ...DEFAULT_CACHE } },
+    providers: [
+      provider('a', [model({ id: 'a-1' })]),
+      provider('b', [model({ id: 'b-1' })]),
+    ],
+  }
+  const sent: Array<Record<string, unknown>> = []
+  const fetchImpl: FetchLike = async (_url, init) => {
+    sent.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+    return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const base: DispatchContext = {
+    requestId: 'r1',
+    body: historyWithProviderFields(),
+    stream: false,
+    secrets: new Map([['a', 'sk-a'], ['b', 'sk-b']]),
+    fetchImpl,
+    now: () => 1_000,
+  }
+
+  await attemptOnce({ ...base, previousProvider: 'a' }, config, 'b', 'b-1')
+  await attemptOnce({ ...base, previousProvider: 'a' }, config, 'a', 'a-1')
+
+  const crossed = (sent[0]?.messages as Array<Record<string, unknown>>)[1] as Record<string, unknown>
+  const same = (sent[1]?.messages as Array<Record<string, unknown>>)[1] as Record<string, unknown>
+  assert.equal('reasoning_content' in crossed, false)
+  assert.equal(same.reasoning_content, '旧的思考过程')
 })

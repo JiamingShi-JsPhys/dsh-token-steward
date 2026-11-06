@@ -45,6 +45,11 @@ export interface DispatchContext {
   signal?: AbortSignal
   /** provider → 已展开的凭据明文；缺失表示该 provider 不可用。 */
   secrets: Map<string, string>
+  /**
+   * 这个会话上一轮真正服务的 provider（来自路由引擎的粘性表）。
+   * 为空表示新会话或上一轮没成功——此时没有「上一家的私有格式」要清。
+   */
+  previousProvider?: string
   /** 额外注入的 header（来自 provider 配置）。 */
   fetchImpl: FetchLike
   /** 当前毫秒。 */
@@ -107,6 +112,102 @@ export function clampOutputToWindow(body: Record<string, unknown>, contextWindow
     }
   }
   return body
+}
+
+/* ─────────────────────── 换模型时的上下文继续 ─────────────────────── */
+
+/**
+ * 各家在助手消息上回写的「思考痕迹」字段。同一家厂商自己认得，
+ * 换一家严格些的上游就会 400，或者把上一家模型的思考过程当正文喂进去。
+ */
+const REASONING_FIELDS = ['reasoning_content', 'reasoning', 'reasoning_details'] as const
+
+/** content 部件里的思考块（Anthropic 形状中转站会带）。 */
+const THINKING_PART_TYPES = new Set(['thinking', 'redacted_thinking'])
+
+/**
+ * 跨厂商请求归一化：切换模型时保住上下文、去掉不属于新厂商的东西。
+ *
+ * 先说清楚能保住什么、保不住什么：
+ *  - **消息日志由客户端原样带着走**（DSH 的会话层不会因为换模型丢历史），
+ *    所以语义上下文不会丢——新模型看到的是同一条完整对话。
+ *  - 换模型真正丢的是上游的**前缀缓存**（KV 复用），以及「上一家的私有字段」。
+ *    前者靠路由的会话粘性（同一会话优先沿用上次成功的模型）来少丢；
+ *    后者在这里清掉：
+ *      · 助手消息上的 reasoning_content / reasoning / reasoning_details；
+ *      · content 部件里的 thinking / redacted_thinking 块；
+ *      · content 部件与消息上的 cache_control（属于上一家的缓存协议）。
+ *
+ * 只在**目标厂商 ≠ 上一轮服务的厂商**时动手；同一厂商内换模型保持原样，
+ * 那是它自己的格式，剥掉反而丢信息。没有历史（previousProvider 为空）时不动。
+ */
+export function normalizeCrossProviderBody(
+  body: Record<string, unknown>,
+  targetProvider: string,
+  previousProvider?: string,
+): Record<string, unknown> {
+  if (previousProvider === undefined || previousProvider === targetProvider) return body
+  const messages = body.messages
+  if (!Array.isArray(messages)) return body
+  let changed = false
+  const nextMessages = messages.map((message) => {
+    const normalized = normalizeMessage(message)
+    if (normalized.changed) changed = true
+    return normalized.message
+  })
+  return changed ? { ...body, messages: nextMessages } : body
+}
+
+/** 清掉一条消息里跨厂商无意义的字段。 */
+function normalizeMessage(message: unknown): { message: unknown; changed: boolean } {
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+    return { message, changed: false }
+  }
+  const record = message as Record<string, unknown>
+  let next: Record<string, unknown> | undefined
+  const clone = (): Record<string, unknown> => (next ??= { ...record })
+  let changed = false
+
+  if (record.role === 'assistant') {
+    for (const field of REASONING_FIELDS) {
+      if (field in record) {
+        delete clone()[field]
+        changed = true
+      }
+    }
+  }
+  if ('cache_control' in record) {
+    delete clone().cache_control
+    changed = true
+  }
+  if (Array.isArray(record.content)) {
+    const parts: unknown[] = []
+    let partsChanged = false
+    for (const part of record.content) {
+      const stripped = normalizePart(part)
+      if (stripped.changed) partsChanged = true
+      if (stripped.part !== null) parts.push(stripped.part)
+    }
+    if (partsChanged) {
+      // 只剩思考块的消息会变成空数组；OpenAI 形状用 null 表示「没有正文」。
+      clone().content = parts.length === 0 ? null : parts
+      changed = true
+    }
+  }
+
+  return { message: changed ? clone() : message, changed }
+}
+
+/** 清掉一个 content 部件里的思考块与缓存标记；思考块本身返回 null 表示丢弃。 */
+function normalizePart(part: unknown): { part: unknown; changed: boolean } {
+  if (typeof part !== 'object' || part === null) return { part, changed: false }
+  const record = part as Record<string, unknown>
+  const type = typeof record.type === 'string' ? record.type : ''
+  if (THINKING_PART_TYPES.has(type)) return { part: null, changed: true }
+  if (!('cache_control' in record)) return { part, changed: false }
+  const next = { ...record }
+  delete next.cache_control
+  return { part: next, changed: true }
 }
 
 /** 上游 URL：endpoint 已经是 …/v1，拼上 /chat/completions。 */
@@ -172,10 +273,15 @@ export async function attemptOnce(
   if (context.signal !== undefined) signals.push(context.signal)
 
   try {
+    const outbound = normalizeCrossProviderBody(
+      rewriteBody(context.body, found.model.id),
+      found.provider.provider_name,
+      context.previousProvider,
+    )
     const response = await context.fetchImpl(upstreamUrl(found.provider), {
       method: 'POST',
       headers: buildHeaders(found.provider, secret),
-      body: JSON.stringify(clampOutputToWindow(rewriteBody(context.body, found.model.id), found.model.context_window)),
+      body: JSON.stringify(clampOutputToWindow(outbound, found.model.context_window)),
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
 

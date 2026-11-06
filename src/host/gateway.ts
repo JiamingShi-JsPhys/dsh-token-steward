@@ -174,9 +174,58 @@ function bearerOf(req: IncomingMessage): string {
   return match?.[1] ?? ''
 }
 
-/** 网关公布的模型 id 列表：4 个虚拟 id + 矩阵里每个真实模型。 */
+/**
+ * 虚拟 id 的自述（面板与模型发现共用）。
+ *
+ * DSH 的模型选择界面和「让 Agent 自己挑模型」的提示词都会读这份清单；
+ * 只给一串 `steward:xxx`，人和 Agent 都只能瞎猜。给每个虚拟 id 一句
+ * 「什么时候用它」，选择才是有依据的。
+ */
+export const VIRTUAL_MODEL_INFO: Record<string, { name: string, strengths: string, tags: string[] }> = {
+  'steward:auto': {
+    name: '管家·自动',
+    strengths: '跟随当前全局调度档位；不确定用哪个时选它',
+    tags: ['auto', 'matrix'],
+  },
+  'steward:frugal': {
+    name: '管家·极致便宜',
+    strengths: '在满足硬过滤的 C/D 级型号里选最便宜；改格式、批量杂活、跑测试日志这类活',
+    tags: ['cheap', 'frugal'],
+  },
+  'steward:balanced': {
+    name: '管家·效率优先',
+    strengths: '任务主维度达 A/A+ 后按质量 0.6 + 成本 0.4 折中；并发请求自动分散到不同上游',
+    tags: ['balanced', 'quality-cost', 'spread'],
+  },
+  'steward:max_power': {
+    name: '管家·最强火力',
+    strengths: '六维总和最高的型号；难题、长链推理、关键代码、一次做对比省钱重要时',
+    tags: ['max-power', 'reasoning', 'quality'],
+  },
+  'steward:free': {
+    name: '管家·白嫖',
+    strengths: '只走零成本型号，绝不偷偷切到付费模型；选不到就报错说明原因',
+    tags: ['free', 'zero-cost'],
+  },
+  'steward:subagent': {
+    name: '管家·子代理',
+    strengths: '子代理专用：按 agentic 能力（0.6）+ 成本（0.4）+ 上下文窗口 + 并发分散自动选型；'
+      + '工具调用可靠、能接住父会话的长前缀、一批子代理同时开工时不撞限流。'
+      + '把 dsh-tool-subagent 的 agentOptions.model 指到它即可',
+    tags: ['subagent', 'tool-use', 'agentic', 'long-context', 'cost-aware', 'spread'],
+  },
+}
+
+/** 网关公布的模型 id 列表：6 个虚拟 id + 矩阵里每个真实模型。 */
 export function publishedModelIds(config: PoolConfig | undefined): string[] {
-  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power']
+  const ids = [
+    'steward:auto',
+    'steward:frugal',
+    'steward:balanced',
+    'steward:max_power',
+    'steward:free',
+    'steward:subagent',
+  ]
   if (config === undefined) return ids
   for (const provider of config.providers) {
     for (const model of provider.models) {
@@ -276,10 +325,12 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
         object: 'list',
         data: ids.map((id) => {
           const model = byId.get(id)
+          const virtual = VIRTUAL_MODEL_INFO[id]
           return {
             id,
             object: 'model',
             owned_by: id.startsWith('steward:') ? 'token-steward' : 'upstream',
+            ...(virtual === undefined ? {} : { name: virtual.name, strengths: virtual.strengths, strength_tags: [...virtual.tags] }),
             ...(model?.strengths !== undefined ? { strengths: model.strengths } : {}),
             ...(model?.strengthTags !== undefined ? { strength_tags: [...model.strengthTags] } : {}),
           }
@@ -332,6 +383,8 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const clock = now()
     const { intent, route } = inferIntent(body, modelId, clock)
     const requestId = 'stg-' + randomBytes(8).toString('hex')
+    // 这个会话上一轮服务过它的厂商：只有在「换了一家」时才做跨厂商归一化。
+    const previousProvider = previousProviderOf(router, intent)
 
     // 虚拟 id 的显式意图优先于全局模式：steward:max_power 就是「这次必须最强」。
     // 顺手把全局模式同步过去，用户在 composer 里选的模型就是设置页里的那一档。
@@ -358,7 +411,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     if (route.pin !== undefined) {
       const pinned: RouteIntent = { ...intent, aliasName: 'pin:' + route.pin.provider + '/' + route.pin.model }
       const planned = router.plan(pinned, clock, requestId, [modelKey(route.pin.provider, route.pin.model)])
-      await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey)
+      await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey, previousProvider)
       return
     }
     if (route.virtual.startsWith('steward:alias/')) {
@@ -371,7 +424,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       if (alias.mode !== undefined) router.setMode(alias.mode)
       if (alias.pin !== undefined) {
         const planned = router.plan(intent, clock, requestId, [modelKey(alias.pin.provider, alias.pin.model)])
-        await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey)
+        await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey, previousProvider)
         return
       }
       const widened: RouteIntent = {
@@ -379,7 +432,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
         requiredCapabilities: unique([...intent.requiredCapabilities, ...(alias.require ?? [])]),
         requiredModalities: unique([...intent.requiredModalities, ...(alias.require_modalities ?? [])]),
       }
-      await runPlanned(res, config, router, router.plan(widened, clock, requestId), body, requestId, intent, cacheKey)
+      await runPlanned(res, config, router, router.plan(widened, clock, requestId), body, requestId, intent, cacheKey, previousProvider)
       return
     }
 
@@ -387,11 +440,11 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const direct = findDirectRoute(config, modelId)
     if (direct !== undefined) {
       const planned = router.plan(intent, clock, requestId, [direct])
-      await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey)
+      await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey, previousProvider)
       return
     }
 
-    await runPlanned(res, config, router, router.plan(intent, clock, requestId), body, requestId, intent, cacheKey)
+    await runPlanned(res, config, router, router.plan(intent, clock, requestId), body, requestId, intent, cacheKey, previousProvider)
   }
 
   /**
@@ -430,6 +483,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     requestId: string,
     intent: RouteIntent,
     cacheKey?: string,
+    previousProvider?: string,
   ): Promise<void> {
     if (!planned.ok) {
       const status = planned.refusal.code === 'all-models-cooling' ? 503 : 400
@@ -443,6 +497,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
         body,
         stream: body.stream === true,
         secrets: options.secrets(),
+        ...(previousProvider === undefined ? {} : { previousProvider }),
         fetchImpl,
         now,
       },
@@ -618,6 +673,20 @@ function findDirectRoute(config: PoolConfig, modelId: string): string | undefine
 function agentIdOf(body: Record<string, unknown>): string {
   const hint = body.user ?? body.session_id
   return typeof hint === 'string' && hint !== '' ? hint : 'unknown'
+}
+
+/**
+ * 这个会话上一轮真正服务的 provider。
+ *
+ * 路由引擎的粘性表记的是 `provider/model`；取第一段作为「上一家」。
+ * 没有记录（新会话 / 上一轮没成功）就返回 undefined——此时不需要做
+ * 跨厂商归一化，也不该假装有。
+ */
+function previousProviderOf(router: StewardRouter, intent: RouteIntent): string | undefined {
+  const previous = router.affinityOf(intent.conversationKey, intent.profile)
+  if (previous === undefined) return undefined
+  const slash = previous.indexOf('/')
+  return slash > 0 ? previous.slice(0, slash) : undefined
 }
 
 /** 把拒绝原因压成一行人话。 */

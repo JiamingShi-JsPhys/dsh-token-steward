@@ -21,6 +21,7 @@ import type {
   RouteCandidate,
   RouteEventView,
   RouteIntent,
+  RoutePreview,
   RoutingMode,
   SnapshotInput,
   TokenUsage,
@@ -38,6 +39,12 @@ export const AGENT_IDLE_MS = 90_000
 
 /** burst 归因的记忆窗口：超过这个时间的批次不再影响打散。 */
 export const BURST_WINDOW_MS = 5_000
+
+/**
+ * 会话粘性表的容量：只记住最近若干会话的「上次服务的模型」。
+ * 衰减靠 LRU（重新 set 会把它挪到最新端），不做定时清理。
+ */
+export const AFFINITY_CAP = 512
 
 /** 路由引擎的可调参数（全部来自 config.defaults，测试可覆盖）。 */
 export interface RouterOptions {
@@ -114,6 +121,19 @@ export interface StewardRouter {
   report(result: AttemptResult, now: number): void
   setMode(mode: RoutingMode): RoutingMode
   getMode(): RoutingMode
+  /**
+   * 本会话上次成功服务的模型 key（provider/model），没有则 undefined。
+   *
+   * profile 参与键：DSH 的子代理可能和父会话共用 session_id，按档位分开记，
+   * 子代理的粘性就不会把主会话钉到子代理的便宜模型上（反之亦然）。
+   */
+  affinityOf(conversationKey: string | undefined, profile?: string): string | undefined
+  /**
+   * 只排名、不派发：按当前意图与模式给出候选顺序。
+   * 不占并发、不记 burst、不动健康状态机——Agent「该把哪个模型派成子代理」
+   * 这类咨询式选择走这里，而不是用 plan() 制造一次假请求。
+   */
+  preview(intent: RouteIntent, now: number, limit?: number): RoutePreview
   noteAgent(agentId: string, provider: string, model: string, now: number): void
   /**
    * 登记一次真实出站的 token 用量：按「六维总和最高的基准模型」折算节省。
@@ -180,6 +200,10 @@ export function createRouter(
   const recent: RouteEventView[] = []
   const agents = new Map<string, AgentRouteView>()
   const bursts = new Map<string, { at: number; counts: Map<string, number> }>()
+  /** 会话键（profile|session）→ 上次成功服务的模型 key。 */
+  const affinity = new Map<string, string>()
+  /** 每个在途请求属于哪个会话，成功收口时据此登记粘性。 */
+  const conversationOf = new Map<string, string>()
   /** 每个请求的降级历史，report 收口时写进事件。 */
   const attempts = new Map<string, Array<{ provider: string; model: string; errorKind: RouteEventView['degradedFrom'][number]['errorKind'] }>>()
   const startedAt = new Map<string, number>()
@@ -258,12 +282,52 @@ export function createRouter(
     return out
   }
 
-  function plan(intent: RouteIntent, now: number, requestId: string, restrict?: string[]): PlanResult {
+  /** 会话粘性表的键：档位与会话分开，主会话与子代理互不串味。 */
+  function affinityKeyOf(conversationKey: string | undefined, profile?: string): string | undefined {
+    if (conversationKey === undefined) return undefined
+    return (profile ?? 'main') + '\u0000' + conversationKey
+  }
+
+  function affinityOf(conversationKey: string | undefined, profile?: string): string | undefined {
+    const key = affinityKeyOf(conversationKey, profile)
+    return key === undefined ? undefined : affinity.get(key)
+  }
+
+  /** 登记「这个会话最后是它服务的」；LRU 淘汰最久未活跃的会话。 */
+  function noteAffinity(conversationKey: string, modelKeyValue: string): void {
+    affinity.delete(conversationKey)
+    affinity.set(conversationKey, modelKeyValue)
+    if (affinity.size > AFFINITY_CAP) {
+      const oldest = affinity.keys().next().value
+      if (oldest !== undefined) affinity.delete(oldest)
+    }
+  }
+
+  /**
+   * 硬过滤 + 打分，产出候选与淘汰原因。
+   * 不碰任何运行时状态（并发、burst、健康），plan 与 preview 都从这里出发。
+   */
+  function rankAll(
+    intent: RouteIntent,
+    now: number,
+    restrict?: string[],
+  ): {
+    scored: RouteCandidate[]
+    rejected: Array<{ provider: string; model: string; reason: string }>
+    notes: string[]
+    stickyKey: string | undefined
+  } {
     const rejected: Array<{ provider: string; model: string; reason: string }> = []
     const scored: RouteCandidate[] = []
     const notes: string[] = []
-    const loads = new Map<string, number>()
     const allowed = restrict === undefined ? undefined : new Set(restrict)
+
+    // 会话粘性：上一次为「这个会话的这类请求」服务的模型。
+    const stickyKey = affinityOf(intent.conversationKey, intent.profile)
+    const stickyModel = stickyKey === undefined
+      ? undefined
+      : models.find((entry) => entry.key === stickyKey)?.model
+    if (stickyKey !== undefined && stickyModel !== undefined) notes.push('sticky:' + stickyKey)
 
     for (const entry of models) {
       const key = entry.key
@@ -275,6 +339,7 @@ export function createRouter(
       }
       // 白嫖模式：只认零成本的模型。付费模型不是「排后面」，是直接不参与——
       // 这个模式的承诺就是绝不偷偷花钱，选不到就报错。
+      // 子代理档位也不例外：白嫖模式下派出去的子代理同样只跑免费模型。
       if (currentMode === 'free' && !isFreeModel(entry.model)) {
         rejected.push({ provider: entry.provider.provider_name, model: entry.model.id, reason: 'not-free' })
         continue
@@ -285,12 +350,11 @@ export function createRouter(
         rejected.push({ provider: entry.provider.provider_name, model: entry.model.id, reason: blocked })
         continue
       }
-      const load = burstLoad(intent, key, now)
-      loads.set(key, load)
       const result = scoreModel(currentMode, entry.model, intent, health, {
         mode: currentMode,
         now,
-        burstLoad: load,
+        burstLoad: burstLoad(intent, key, now),
+        ...(stickyModel === undefined ? {} : { stickyModel }),
       })
       scored.push({
         provider: entry.provider.provider_name,
@@ -304,7 +368,12 @@ export function createRouter(
       notes.push('tools-present → required tool-use')
     }
     if (intent.aliasName !== undefined) notes.push('alias:' + intent.aliasName)
+    if (intent.profile !== undefined) notes.push('profile:' + intent.profile)
+    return { scored, rejected, notes, stickyKey }
+  }
 
+  function plan(intent: RouteIntent, now: number, requestId: string, restrict?: string[]): PlanResult {
+    const { scored, rejected, notes } = rankAll(intent, now, restrict)
     const ranked = uniqueCandidates(scored.sort(compareCandidates))
 
     if (ranked.length === 0) {
@@ -335,6 +404,8 @@ export function createRouter(
     noteBurst(intent.burstKey, modelKey(chosen.provider, chosen.model), now)
     attempts.set(requestId, [])
     startedAt.set(requestId, now)
+    const conversation = affinityKeyOf(intent.conversationKey, intent.profile)
+    if (conversation !== undefined) conversationOf.set(requestId, conversation)
 
     return {
       ok: true,
@@ -349,6 +420,12 @@ export function createRouter(
     }
   }
 
+  function preview(intent: RouteIntent, now: number, limit = 5): RoutePreview {
+    const { scored, rejected, notes } = rankAll(intent, now)
+    const ranked = uniqueCandidates(scored.sort(compareCandidates)).slice(0, Math.max(1, limit))
+    return { mode: currentMode, ranked, rejected, notes }
+  }
+
   function report(result: AttemptResult, now: number): void {
     const key = modelKey(result.provider, result.model)
     const health = healthFor(key)
@@ -357,6 +434,13 @@ export function createRouter(
       failure_threshold: resolved.failureThreshold,
       half_open_after_ms: resolved.halfOpenAfterMs,
     })
+
+    // 成功服务过这个会话的模型记进粘性表：下一轮优先沿用，前缀缓存与输出风格
+    // 都不会因为一次选路抖动而从头再来。
+    if (result.ok) {
+      const conversation = conversationOf.get(result.requestId)
+      if (conversation !== undefined) noteAffinity(conversation, key)
+    }
 
     const history = attempts.get(result.requestId)
     if (history === undefined) return
@@ -391,6 +475,7 @@ export function createRouter(
 
     attempts.delete(result.requestId)
     startedAt.delete(result.requestId)
+    conversationOf.delete(result.requestId)
   }
 
   function setMode(next: RoutingMode): RoutingMode {
@@ -549,6 +634,8 @@ export function createRouter(
     report,
     setMode,
     getMode,
+    affinityOf,
+    preview,
     noteAgent,
     noteCacheHit,
     noteUsage,

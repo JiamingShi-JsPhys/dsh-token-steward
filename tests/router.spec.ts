@@ -618,3 +618,63 @@ test('管家·白嫖 的中文写法能认出来，并且落到 free 模式', ()
   const parsed = parseVirtualModel('管家·白嫖')
   assert.equal(parsed?.mode, 'free')
 })
+
+/* ─────────────────── 会话粘性与只读排名（1.1.0） ─────────────────── */
+
+test('preview 只排名不派发：不占并发、不改健康状态', () => {
+  const router = createRouter(matrix())
+  const preview = router.preview(intent(), 1_000)
+  assert.ok(preview.ranked.length > 0)
+  assert.ok((preview.ranked[0]?.reasons.length ?? 0) > 0)
+  for (const entry of router.listModels()) {
+    assert.equal(router.healthOf(entry.provider.provider_name, entry.model.id)?.inFlight ?? 0, 0)
+  }
+})
+
+test('preview：子代理档位把没有工具能力的模型挡在候选之外', () => {
+  const router = createRouter(matrix())
+  const preview = router.preview(intent({
+    dimension: 'agentic',
+    needsTools: true,
+    requiredCapabilities: ['coding', 'tool-use'],
+    profile: 'subagent',
+  }), 1_000)
+  assert.equal(preview.notes.includes('profile:subagent'), true)
+  // free-slow 与 huge-window 都没有 tool-use，一个都不该出现。
+  assert.ok(preview.ranked.every((candidate) => candidate.model !== 'free-slow'))
+  assert.ok(preview.ranked.every((candidate) => candidate.model !== 'huge-window'))
+  assert.ok(preview.rejected.some((entry) => entry.reason === 'missing-capability:tool-use'))
+})
+
+test('会话粘性：成功收口后记住模型，下一轮带 sticky 说明与加分', () => {
+  const router = createRouter(matrix(), { maxAttempts: 2 }, 'max_power')
+  const first = intent({ conversationKey: 'session:s1' })
+  const planned = router.plan(first, 1_000, 'r1')
+  assert.ok(planned.ok)
+  const chosen = planned.decision.chosen
+  // 还没成功：不记粘性。
+  assert.equal(router.affinityOf('session:s1'), undefined)
+
+  router.report(ok(chosen.provider, chosen.model, 'r1'), 1_100)
+  assert.equal(router.affinityOf('session:s1'), modelKey(chosen.provider, chosen.model))
+
+  const again = router.plan({ ...first, burstKey: 'burst-later' }, 9_000, 'r2')
+  assert.ok(again.ok)
+  assert.ok(again.decision.notes.includes('sticky:' + modelKey(chosen.provider, chosen.model)))
+  assert.ok(again.decision.chosen.reasons.includes('STICKY:on'))
+})
+
+test('会话粘性按档位分开：主会话与子代理互不串味', () => {
+  const router = createRouter(matrix(), undefined, 'max_power')
+  const planned = router.plan(intent({ conversationKey: 'session:s2' }), 1_000, 'r1')
+  assert.ok(planned.ok)
+  router.report(ok(planned.decision.chosen.provider, planned.decision.chosen.model, 'r1'), 1_100)
+
+  assert.ok(router.affinityOf('session:s2') !== undefined)
+  assert.equal(router.affinityOf('session:s2', 'subagent'), undefined)
+})
+
+test('没有会话键就没有粘性', () => {
+  const router = createRouter(matrix())
+  assert.equal(router.affinityOf(undefined), undefined)
+})

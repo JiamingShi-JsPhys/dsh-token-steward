@@ -29,12 +29,13 @@ import { DEFAULT_CACHE } from './core/pool-schema.ts'
 import { createPoolWatcher } from './host/pool-watch.ts'
 import { createRouteLedgerStore } from './host/ledger-store.ts'
 import { createRouter, type StewardRouter } from './core/router.ts'
+import { inferIntent } from './core/intent.ts'
 import { credentialKind, resolveCredential } from './host/credentials.ts'
 import { startGateway, type Gateway } from './host/gateway.ts'
 import { makePanelRoutes } from './host/routes.ts'
 import { readUsageProjection } from './host/usage-bridge.ts'
 import { writeFileAtomic } from './host/atomic-file.ts'
-import type { GatewayState, ImportScope, PoolConfig, RoutingMode } from './core/types.ts'
+import type { GatewayState, ImportScope, PoolConfig, RouteIntent, RoutingMode } from './core/types.ts'
 
 /**
  * profile 里 steward provider 的 `apiKeyEnv`。插件启动时要把它写进进程环境，
@@ -685,13 +686,35 @@ export async function apply(ctx: {
     },
     getMode: () => router?.getMode() ?? vendorDoc.mode,
     gatewayBaseUrl: () => gateway?.baseUrl(),
+    recommend: (input) => {
+      if (router === undefined) return undefined
+      // 用一段合成请求走一遍真实的意图推断：主维度、窗口需求、工具要求
+      // 都与线上请求同源，推荐结果才不会和网关实际选路各说各话。
+      const task = input.task ?? ''
+      const subagent = input.profile === 'subagent'
+      const body: Record<string, unknown> = {
+        messages: task === '' ? [] : [{ role: 'user', content: task }],
+        // 子代理一定带工具；给一个占位定义，让「tool-use」成为硬要求。
+        ...(subagent
+          ? { tools: [{ type: 'function', function: { name: 'noop', description: 'placeholder', parameters: { type: 'object', properties: {} } } }] }
+          : {}),
+      }
+      const { intent: base } = inferIntent(body, subagent ? 'steward:subagent' : 'steward:auto', Date.now())
+      const intent: RouteIntent = {
+        ...base,
+        burstKey: 'recommend',
+        ...(input.estimatedInputTokens === undefined ? {} : { estimatedInputTokens: input.estimatedInputTokens }),
+      }
+      delete intent.conversationKey
+      return router.preview(intent, Date.now(), 5)
+    },
   }
   const tools = ctx.get?.<{ register(tool: unknown): () => void }>('tools')
   if (tools !== undefined && typeof tools.register === 'function') {
     try {
       disposers.push(tools.register({
         name: 'token_steward_manage',
-        description: '管理 Token 管家模型矩阵：添加/移除厂商、启用/停用模型、给模型打擅长标签、切换调度模式。改动立即生效（热重载）。',
+        description: '管理 Token 管家模型矩阵：添加/移除厂商、启用/停用模型、给模型打擅长标签、切换调度模式、按任务推荐该用哪个模型（含子代理档位）。改动立即生效（热重载）。',
         parameters: STEWARD_TOOL_PARAMETERS,
         output: { schema: { type: 'string' } },
         async execute(args: StewardActionArgs) {
@@ -712,14 +735,18 @@ export async function apply(ctx: {
         content: [
           '# Token 管家（模型矩阵）',
           '',
-          '当用户想「接入某个模型厂商 / 启用某些模型 / 给模型打擅长标签 / 切换调度模式」时，使用 token_steward_manage 工具。',
+          '当用户想「接入某个模型厂商 / 启用某些模型 / 给模型打擅长标签 / 切换调度模式 / 决定该用哪个模型」时，使用 token_steward_manage 工具。',
           '',
           '工作流：',
           '1. 先 action=show_status 看当前矩阵；',
           '2. 接厂商：action=add_or_update_vendor，给 vendor_id / base_url / api_key（推荐 env:NAME 引用）/ enabled_models；',
           '3. 勾模型：action=set_enabled_models；',
           '4. 打标签：action=tag_model，标签用简单能力词（编程 / 文案 / 视频 / 做题 / 推理 / 多模态 / 快速 / 前端 …）；',
-          '5. 切模式：action=set_mode（frugal=满足硬过滤的 C/D 级里最便宜；balanced=任务维度须达 A/A+ 再看成本；max_power=六维总和最高）。',
+          '5. 切模式：action=set_mode（frugal=满足硬过滤的 C/D 级里最便宜；balanced=任务维度须达 A/A+ 再看成本；max_power=六维总和最高；free=白嫖）。',
+          '',
+          '要派子代理（sub agent）时：先用 action=recommend_model + profile=subagent + task="<一句话任务>"',
+          '拿到按 agentic 能力、成本、上下文窗口与并发分散排序的候选，再决定派哪个模型；',
+          '想让它自动生效，把 dsh-tool-subagent 的 agentOptions 设为 { provider: "steward", model: "steward:subagent" }。',
           '',
           '所有改动立即热生效，无需重启。密钥永不出现在你的回复里。',
         ].join('\n'),
@@ -773,7 +800,7 @@ export async function apply(ctx: {
 
 /** 网关公布的模型 id（与 host/gateway 的规则同源）。 */
 function gatewayModelIds(config: PoolConfig | undefined): string[] {
-  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free']
+  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free', 'steward:subagent']
   if (config === undefined) return ids
   for (const provider of config.providers) {
     for (const model of provider.models) {

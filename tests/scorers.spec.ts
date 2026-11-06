@@ -11,8 +11,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SCORERS,
+  STICKY_BONUS,
   scoreModel,
   scorerFor,
+  scorerForIntent,
+  subagentScorer,
   dimensionReading,
   costScoreOf,
   meetsBalancedGate,
@@ -239,4 +242,54 @@ test('三个模式对同一组模型给出不同的赢家，说明模式真的�
   assert.equal(winnerOf('frugal'), 'low', '极致便宜：C/D 里最便宜的赢')
   assert.equal(winnerOf('balanced'), 'mid', '效率优先：过 A 门槛里性价比最好的赢')
   assert.equal(winnerOf('max_power'), 'strong', '最强火力：六维总和最高的赢')
+})
+
+/* ─────────────────── 子代理档位与模型粘性（1.1.0） ─────────────────── */
+
+const SUBAGENT_INTENT = intent({
+  dimension: 'agentic',
+  needsTools: true,
+  requiredCapabilities: ['coding', 'tool-use'],
+  profile: 'subagent',
+})
+
+test('子代理档位优先于调度模式选择打分器', () => {
+  assert.equal(scorerForIntent('frugal', SUBAGENT_INTENT), subagentScorer)
+  assert.equal(scorerForIntent('frugal', intent()), scorerFor('frugal'))
+})
+
+test('子代理档位：选「够好且便宜」，不选最贵，也不选过不了门槛的', () => {
+  const expensive = model({ id: 'expensive', capabilities: ['coding', 'tool-use'], cost_level: 'high', quality_rank: 95 })
+  const cheapGood = model({ id: 'cheap-good', capabilities: ['coding', 'tool-use'], cost_level: 'low', quality_rank: 80 })
+  const weak = model({ id: 'weak', capabilities: ['coding', 'tool-use'], cost_level: 'free', quality_rank: 40 })
+  const context: ScoreContext = { mode: 'balanced', now: 1_000, burstLoad: 0 }
+  const scores = [expensive, cheapGood, weak]
+    .map((entry) => scoreModel('balanced', entry, SUBAGENT_INTENT, createHealth(0), context))
+
+  assert.ok(scores[1]!.score > scores[0]!.score, '便宜但够好的应当赢过最贵的')
+  assert.ok(scores[1]!.score > scores[2]!.score, '过不了 B+ 门槛的免费模型不该赢')
+  assert.ok(scores[1]!.reasons.includes('PROFILE:subagent'))
+  assert.ok(scores[2]!.reasons.includes('GATE:BELOW'))
+})
+
+test('子代理档位：一批子代理同时开工时，burst 打散是决定性的', () => {
+  const entry = model({ id: 'm', capabilities: ['coding', 'tool-use'], cost_level: 'low', quality_rank: 80 })
+  const health = createHealth(0)
+  const idle = scoreModel('balanced', entry, SUBAGENT_INTENT, health, { mode: 'balanced', now: 1_000, burstLoad: 0 })
+  const busy = scoreModel('balanced', entry, SUBAGENT_INTENT, health, { mode: 'balanced', now: 1_000, burstLoad: 1 })
+  // 20000 的 burst 罚分远大于质量与成本的任何合理差异。
+  assert.ok(idle.score - busy.score >= 19_000)
+})
+
+test('模型粘性：只加在命中的模型上，数额固定并写进理由', () => {
+  const entry = model({ id: 'm', capabilities: ['coding'], quality_rank: 70, cost_level: 'low' })
+  const plain = score('balanced', entry)
+  const sticky = score('balanced', entry, { stickyModel: entry })
+  const other = model({ id: 'other', capabilities: ['coding'] })
+  const notSticky = score('balanced', entry, { stickyModel: other })
+
+  assert.equal(sticky.score - plain.score, STICKY_BONUS.balanced)
+  assert.ok(sticky.reasons.includes('STICKY:on'))
+  assert.equal(notSticky.score, plain.score)
+  assert.ok(!notSticky.reasons.includes('STICKY:on'))
 })

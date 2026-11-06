@@ -6,7 +6,10 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.0.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 458 条
+**版本：** 1.1.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 485 条
+
+> **如果它帮到了你，去仓库点一颗 Star 吧** —— 作者 **[@JiamingShi-JsPhys](https://github.com/JiamingShi-JsPhys)**。
+> 一个 Star 不花什么力气，但对一个人维护的插件来说是继续修 bug、补厂商、跟进 DSH 新版本的直接动力。
 
 ---
 
@@ -78,7 +81,55 @@ flowchart LR
 
 **白嫖模式是一等模式，不是「省钱」的别名。** 它做的是硬过滤：价目为 0 的型号才进候选——免费池里标 0 的，或者你自己在「管家设置」里填成 0 的。一个都选不到时，它报错并告诉你原因（`agnes/agnes-3.0-flash: not-free`），**绝不会偷偷切到付费模型**。自定义厂家里没有目录价目的型号，会以「推定免费」的身份进入候选，成本看板仍如实标为未定价，不编数字。
 
-模式跟着输入框里选的模型走：选「管家·自动」就用当前全局档位，选「管家·白嫖」就钉死免费档。面板上切档位，等价于切「管家·自动」的行为。
+模式跟着输入框里选的模型走：选「管家·自动」就用当前全局档位，选「管家·白嫖」就钉死免费档。面板上切档位，等价于切「管家·自动」的行为。`steward:subagent` 是**档位不是模式**：它不改全局档位，只改变「这一个请求」的打分规则——见下一节。
+
+---
+
+## 子代理：把哪个模型派出去
+
+DSH 的子代理（`dsh-tool-subagent`）默认继承父会话的路由。这在「主代理用最强火力、子代理只做搜索」时浪费钱，在「主代理用便宜档、子代理要改关键代码」时又拖后腿。1.1.0 给子代理单开了一个档位：
+
+```yaml
+- id: subagent
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    agentOptions:
+      provider: steward
+      model: steward:subagent
+```
+
+`steward:subagent` 不走三个调度模式，它有自己的打分：
+
+| 因素 | 权重 | 理由 |
+|---|---|---|
+| agentic 维度质量 | 0.6 | 子代理接的是读文件、跑命令、改代码、验证的真活 |
+| 成本 | 0.4 | 一个搜索型子任务用顶配模型是纯浪费 |
+| 上下文窗口 | 每 100k +4 分，封顶 40 | 子代理带着父会话的已完成轮次，长前缀是常态 |
+| 延迟 | 最多 +20 分 | 子代理在关键路径上，快一点更好 |
+| 并发打散 | 决定性（每个 burst −20000） | 一批子代理同时开工时落到不同上游，不一起撞 429 |
+| 会话粘性 | +300 | 同一子代理会话的后续轮次沿用同一模型，保住前缀缓存 |
+
+硬门槛是 agentic 维度 **B+**：弱模型会把工具调用写坏、把半截结果当完成。白嫖模式下子代理同样只跑零成本模型——这个承诺不会被档位绕过。
+
+想让 Agent 在派活前先问一句「该用谁」，工具里有 `recommend_model`：
+
+```
+action=recommend_model, profile=subagent, task="读仓库并改一个测试"
+```
+
+它返回按上述规则排好序的 `provider/model` 与逐项理由（`PROFILE:subagent` `GATE:B+` `BURST:0` `WINDOW:128000` …）。`/v1/models` 也会把 `steward:subagent` 连同擅长说明一起发布，模型发现与选择界面据此就能给出人话解释。
+
+---
+
+## 换模型时，上下文怎么办
+
+先说结论：**消息日志本身不会丢**——DSH 的会话层把完整历史原样发给新模型，语义上下文是连续的。真正会损失的是三样东西，1.1.0 各有一条对策：
+
+1. **上游前缀缓存（KV 复用）**。每换一次模型，新厂商要从零读完整段前缀，长会话的输入费用会翻几倍。对策是**会话粘性**：同一会话（`session_id` / agent id）里一旦某个模型成功服务过，下一轮给它一个小额加分（frugal +60 / balanced +300 / max_power +120）。加分只在你追我赶的候选之间生效，不推翻模式主序，也远小于并发打散的罚分；主会话与子代理按档位分开记，互不串味。
+2. **上一家的私有字段**。DeepSeek / Moonshot 在助手消息上回写 `reasoning_content`，OpenRouter 回 `reasoning_details`，Anthropic 形状的中转站用 `thinking` 块与 `cache_control` 标记。同一家自己认得，换一家严格些的上游会 400，或者把上一家的思考过程当正文喂进去。对策是**跨厂商请求归一化**：只在目标厂商 ≠ 上一轮服务的厂商时，剥掉这些字段（系统提示与用户内容一字不动）。
+3. **窗口收缩**。会话长过新模型的窗口时，硬过滤会直接拒绝并说明原因（`window-too-small`），而不是悄悄截断历史——上下文可以少用，不能被删。
+
+至于「把上一家的 KV 状态直接搬给下一家」：这需要模型内部状态，公开的 `chat/completions` 协议给不了。相关研究（跨模型 KV 缓存迁移）都要求权重与推理栈可控，插件这一层做不到，也不假装做到。上面三条是 API 层能拿到的全部收益。
 
 ---
 
@@ -157,6 +208,7 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
           - { id: 'steward:balanced',  name: '管家·效率优先' }
           - { id: 'steward:max_power', name: '管家·最强火力' }
           - { id: 'steward:free',      name: '管家·白嫖' }
+          - { id: 'steward:subagent',  name: '管家·子代理' }
 ```
 
 改完 profile 需要**重启 DSH 服务**才生效。
@@ -183,7 +235,7 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 
 **让白嫖可用。** 在「免费池」里挑一家（百度千帆 / 硅基流动 / OpenRouter）拉取并勾选，或者在任意厂家把型号价目填 0。启用的零成本卡片会挂「免费·白嫖可用」徽标，切到「管家·白嫖」立刻只剩它们。
 
-**让 Agent 帮你改。** 直接说「把 xxx 接进来，只开三个模型，切到白嫖」，Agent 会调用 `token_steward_manage`（`show_status / add_or_update_vendor / set_enabled_models / tag_model / remove_vendor / set_mode`），改动走与面板完全相同的原子保存路径，立即热重载。
+**让 Agent 帮你改。** 直接说「把 xxx 接进来，只开三个模型，切到白嫖」，Agent 会调用 `token_steward_manage`（`show_status / recommend_model / add_or_update_vendor / set_enabled_models / tag_model / remove_vendor / set_mode`），改动走与面板完全相同的原子保存路径，立即热重载。派子代理前想先问「谁合适」，就让它调 `recommend_model`，拿到带理由的排序再决定。
 
 ---
 
@@ -193,10 +245,11 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 |---|---|
 | `steward:auto` | 按当前全局模式选路 |
 | `steward:frugal` / `steward:balanced` / `steward:max_power` / `steward:free` | 钉死某个模式 |
+| `steward:subagent` | 子代理档位：按 agentic 质量 + 成本 + 窗口 + 并发分散选型，不改全局模式 |
 | `steward:pin/<provider>/<model>` | 直通某个具体模型（仍走熔断与计量） |
 | `steward:alias/<name>` | `routing.aliases` 里定义的自定义意图 |
 
-也可以直接写矩阵里某个真实模型 id，网关会直通到它。输入框的模型菜单里另有中文别名：管家·自动 / 管家·极致便宜 / 管家·效率优先 / 管家·最强火力 / 管家·白嫖。
+也可以直接写矩阵里某个真实模型 id，网关会直通到它。输入框的模型菜单里另有中文别名：管家·自动 / 管家·极致便宜 / 管家·效率优先 / 管家·最强火力 / 管家·白嫖 / 管家·子代理。
 
 ---
 
@@ -245,7 +298,7 @@ model_pool.example.yaml  矩阵配置样例
 ```bash
 npm install
 npm run build      # 产出 lib/index.js 与 lib/client.js
-npm test           # 先构建，再跑全部 458 条断言
+npm test           # 先构建，再跑全部 485 条断言
 npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）
 ```
 
@@ -260,6 +313,8 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 - **缓存只服务可复现的调用。** 带 tools、带随机种子、超长 prompt 都不缓存。
 - **成本是台账与估算的合成。** 上游不返 usage 的调用只能记估算值；面板会标出来。
 - **`vendors.json` 里的密钥是明文。** 权限 0600、只在本机，但不是加密存储。
+- **跨模型不搬 KV 状态。** 公开协议下只能保住消息日志、清理上一家的私有字段、并用会话粘性少丢前缀缓存；模型内部状态无法迁移。窗口放不下时是拒绝，不是截断。
+- **会话粘性只在本进程内。** DSH 重启后第一次请求会重新选路，之后照常粘住。
 
 ---
 
@@ -274,6 +329,9 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 ## 开源许可与致谢
 
 MIT，见 `LICENSE`。版本历史见 `CHANGELOG.md`，架构与决策记录见 `docs/architecture.md`。
+
+觉得好用的话，顺手给 **[@JiamingShi-JsPhys](https://github.com/JiamingShi-JsPhys)** 的仓库点颗 Star：
+<https://github.com/JiamingShi-JsPhys/dsh-token-steward>
 
 - 厂商头像立绘：B 站 UP 主 **@zipzippipe**，版权归原作者所有。
 - 面板与调度器的形态参考了 DSH 社区插件（`dsh-usage`、`dsh-provider-proxy`）的公开实现与文档。

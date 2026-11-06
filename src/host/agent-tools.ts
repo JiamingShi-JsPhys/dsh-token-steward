@@ -8,7 +8,7 @@
  * 纪律：execute 里的一切变更都走与面板相同的保存路径（vendors.json 整表
  * 原子写，密钥空串=保留已存明文），返回人话 + 关键 JSON，供 Agent 转述。
  */
-import type { RoutingMode, VendorConfig } from '../core/types.ts'
+import type { RoutePreview, RoutingMode, VendorConfig } from '../core/types.ts'
 
 /** 工具动作的参数。 */
 export interface StewardActionArgs {
@@ -21,6 +21,20 @@ export interface StewardActionArgs {
   model_id?: string
   tags?: string[]
   mode?: string
+  /** recommend_model 用：这次任务大概要干什么（一句话即可）。 */
+  task?: string
+  /** recommend_model 用：default = 按当前模式；subagent = 按子代理档位。 */
+  profile?: string
+}
+
+/** 一次「该选谁」的咨询输入。 */
+export interface RecommendInput {
+  /** 任务描述；只用来推断主维度与规模，不做内容解析。 */
+  task?: string
+  /** default（当前模式）或 subagent（子代理档位）。 */
+  profile?: 'default' | 'subagent'
+  /** 输入规模（token）；缺省按任务文本估算。 */
+  estimatedInputTokens?: number
 }
 
 /** 工具背后的服务面（index.ts 注入，全部走面板同款保存路径）。 */
@@ -33,6 +47,11 @@ export interface StewardToolDeps {
   setMode(mode: RoutingMode): Promise<void>
   getMode(): RoutingMode
   gatewayBaseUrl(): string | undefined
+  /**
+   * 只排名、不派发的选路咨询：给 Agent 一个「该把哪个模型派成子代理」的
+   * 依据。矩阵未加载时返回 undefined。
+   */
+  recommend(input: RecommendInput): RoutePreview | undefined
 }
 
 const MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power', 'free']
@@ -129,7 +148,39 @@ export async function executeStewardAction(deps: StewardToolDeps, args: StewardA
     return '模型 ' + args.model_id + ' 的标签已更新: ' + (modelTags[args.model_id] ?? []).join(', ')
   }
 
-  return '未知 action: ' + action + '（可用: show_status | set_mode | add_or_update_vendor | remove_vendor | set_enabled_models | tag_model）'
+  if (action === 'recommend_model') {
+    const profile = args.profile === 'subagent' ? 'subagent' : undefined
+    const preview = deps.recommend({
+      ...(args.task === undefined || args.task === '' ? {} : { task: args.task }),
+      ...(profile === undefined ? {} : { profile }),
+    })
+    if (preview === undefined) return '模型矩阵还没加载（配置文件缺失或被拒），暂时无法推荐'
+    const header = '当前模式：' + preview.mode + (profile === 'subagent'
+      ? '｜档位：子代理（agentic 能力 0.6 + 成本 0.4 + 窗口 + 并发分散）'
+      : '')
+    if (preview.ranked.length === 0) {
+      const reasons = preview.rejected.slice(0, 5)
+        .map((entry) => entry.provider + '/' + entry.model + ': ' + entry.reason)
+        .join('; ')
+      return header + '\n没有可用候选' + (reasons === '' ? '' : '：' + reasons)
+    }
+    const lines = preview.ranked.map((candidate, index) =>
+      String(index + 1) + '. ' + candidate.provider + '/' + candidate.model
+      + '（分数 ' + String(candidate.score) + '）\n   ' + candidate.reasons.join(' · '))
+    return [
+      header,
+      '推荐顺序：',
+      ...lines,
+      ...(preview.notes.length === 0 ? [] : ['说明：' + preview.notes.join(' · ')]),
+      '',
+      profile === 'subagent'
+        ? '要让它自动生效：把 dsh-tool-subagent 的 agentOptions 设为 { provider: "steward", model: "steward:subagent" }，之后所有子代理都按这套排序选型。'
+        : '这是「本轮请求」的排序；想固定档位就切模式，或直接用上面的 provider/model 直通。',
+    ].join('\n')
+  }
+
+  return '未知 action: ' + action
+    + '（可用: show_status | set_mode | recommend_model | add_or_update_vendor | remove_vendor | set_enabled_models | tag_model）'
 }
 
 /** 工具的参数契约（宿主 tools 服务注册用）。 */
@@ -137,7 +188,7 @@ export const STEWARD_TOOL_PARAMETERS = {
   action: {
     type: 'string',
     required: true,
-    description: '动作：show_status | add_or_update_vendor | remove_vendor | set_enabled_models | tag_model | set_mode',
+    description: '动作：show_status | recommend_model | add_or_update_vendor | remove_vendor | set_enabled_models | tag_model | set_mode',
   },
   vendor_id: {
     type: 'string',
@@ -153,4 +204,12 @@ export const STEWARD_TOOL_PARAMETERS = {
   model_id: { type: 'string', description: '要打标签的模型 id（tag_model 时必填）' },
   tags: { type: 'array', description: '擅长标签数组（tag_model 时必填），如 ["编程", "文案", "做题"]' },
   mode: { type: 'string', description: '调度模式：frugal | balanced | max_power | free（free = 白嫖，只走零成本模型；set_mode 时必填）' },
+  task: {
+    type: 'string',
+    description: 'recommend_model 用：这次任务大概要干什么（一句话，如「读仓库并改一个测试」「写一篇长文」「看图」）。用于推断主维度与规模',
+  },
+  profile: {
+    type: 'string',
+    description: 'recommend_model 用：default（按当前模式）| subagent（子代理档位）。要决定「派哪个模型做子代理」时用 subagent',
+  },
 }

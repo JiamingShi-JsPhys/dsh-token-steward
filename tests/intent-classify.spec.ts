@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import {
   burstKeyOf,
   contentText,
+  conversationKeyOf,
   estimateInputTokens,
   estimateOutputTokens,
   hasImagePart,
@@ -242,4 +243,38 @@ test('errorMessageOf 优先取嵌套的 error.message', () => {
 test('errorMessageOf 对超长消息截断，不把整个上游响应回传给客户端', () => {
   const long = 'x'.repeat(2_000)
   assert.equal(errorMessageOf({ error: { message: long } }, 'fallback').length, 500)
+})
+
+/* ─────────────────── 子代理档位与会话键（1.1.0） ─────────────────── */
+
+test('steward:subagent 是档位，不是模式', () => {
+  assert.deepEqual(parseVirtualModel('steward:subagent'), { virtual: 'steward:subagent', profile: 'subagent' })
+  // 中文与友好写法同样归一。
+  assert.deepEqual(parseVirtualModel('管家·子代理'), { virtual: 'steward:subagent', profile: 'subagent' })
+  assert.deepEqual(parseVirtualModel('Steward Subagent'), { virtual: 'steward:subagent', profile: 'subagent' })
+})
+
+test('inferIntent：子代理档位强制按 agentic 打分', () => {
+  const { intent, route } = inferIntent({
+    messages: [{ role: 'user', content: '读仓库并改一个测试' }],
+  }, 'steward:subagent', 1_000)
+  assert.equal(route.profile, 'subagent')
+  assert.equal(intent.profile, 'subagent')
+  // 这一轮没带 tools，也仍按代理能力选人——子代理的工作形态就是工具循环。
+  assert.equal(intent.dimension, 'agentic')
+})
+
+test('conversationKeyOf：session_id 优先，其次 conversation_id / chat_id，最后 user', () => {
+  assert.equal(conversationKeyOf({ session_id: 's1', user: 'u1' }), 'session_id:s1')
+  assert.equal(conversationKeyOf({ conversation_id: 'c1', user: 'u1' }), 'conversation_id:c1')
+  assert.equal(conversationKeyOf({ chat_id: 'k1' }), 'chat_id:k1')
+  assert.equal(conversationKeyOf({ user: 'u1' }), 'user:u1')
+  assert.equal(conversationKeyOf({ messages: [] }), undefined)
+  assert.equal(conversationKeyOf({ metadata: { session_id: 'm1' } }), 'session_id:m1')
+})
+
+test('inferIntent：会话键随请求带进意图，普通请求没有档位', () => {
+  const { intent } = inferIntent({ user: 'sess-9', messages: [] }, 'steward:auto', 1_000)
+  assert.equal(intent.conversationKey, 'user:sess-9')
+  assert.equal(intent.profile, undefined)
 })

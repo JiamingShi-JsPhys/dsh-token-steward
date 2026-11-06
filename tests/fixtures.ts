@@ -109,5 +109,7 @@ export function intent(overrides: Partial<RouteIntent> = {}): RouteIntent {
     stream: overrides.stream ?? true,
     burstKey: overrides.burstKey ?? 'burst-0',
     ...(overrides.aliasName === undefined ? {} : { aliasName: overrides.aliasName }),
+    ...(overrides.conversationKey === undefined ? {} : { conversationKey: overrides.conversationKey }),
+    ...(overrides.profile === undefined ? {} : { profile: overrides.profile }),
   }
 }

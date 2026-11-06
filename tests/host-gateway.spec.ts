@@ -103,9 +103,9 @@ test('令牌是随机且足够长', () => {
   assert.ok(a.length >= 40)
 })
 
-test('publishedModelIds 总是含 4 个虚拟 id，并跳过 offline 模型', () => {
+test('publishedModelIds 总是含 6 个虚拟 id，并跳过 offline 模型', () => {
   const ids = publishedModelIds(config())
-  for (const virtual of ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power']) {
+  for (const virtual of ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free', 'steward:subagent']) {
     assert.ok(ids.includes(virtual), virtual)
   }
   assert.ok(ids.includes('cheap-1'))
@@ -114,8 +114,10 @@ test('publishedModelIds 总是含 4 个虚拟 id，并跳过 offline 模型', ()
   assert.equal(publishedModelIds(withOffline).includes('cheap-1'), false)
 })
 
-test('publishedModelIds 在没有配置时仍然给出 4 个虚拟 id', () => {
-  assert.deepEqual(publishedModelIds(undefined), ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power'])
+test('publishedModelIds 在没有配置时仍然给出 6 个虚拟 id', () => {
+  assert.deepEqual(publishedModelIds(undefined), [
+    'steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free', 'steward:subagent',
+  ])
 })
 
 test('GET /v1/models 返回全量清单', async () => {
@@ -404,4 +406,65 @@ test('回归：流式 usage 也记在真实模型名下', async () => {
     await gateway.close()
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+/* ───────────── 虚拟 id 的自述与会话上下文继续（1.1.0） ───────────── */
+
+test('GET /v1/models 给虚拟 id 配上名字与擅长说明', async () => {
+  sharedRouter = createRouter(config())
+  await withGateway(async (gateway) => {
+    const response = await fetch(gateway.baseUrl() + '/models', {
+      headers: { authorization: 'Bearer ' + gateway.token() },
+    })
+    const body = await response.json() as {
+      data: Array<{ id: string, name?: string, strengths?: string, strength_tags?: string[] }>
+    }
+    const subagent = body.data.find((entry) => entry.id === 'steward:subagent')
+    assert.ok(subagent !== undefined, '子代理档位必须出现在发布清单里')
+    assert.equal(subagent.name, '管家·子代理')
+    assert.ok((subagent.strengths ?? '').includes('子代理'))
+    assert.ok(subagent.strength_tags?.includes('subagent'))
+  })
+})
+
+test('同一会话换厂商：上下文保留，上一家的思考字段被清掉', async () => {
+  sharedRouter = createRouter(config())
+  await withGateway(async (gateway, calls) => {
+    const messages = [
+      { role: 'user', content: '先看看仓库' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '先读文件' },
+          { type: 'text', text: '看过了', cache_control: { type: 'ephemeral' } },
+        ],
+        reasoning_content: '旧的思考',
+        reasoning_details: [{ type: 'reasoning.text' }],
+        cache_control: { type: 'ephemeral' },
+      },
+      { role: 'user', content: '继续' },
+    ]
+
+    // 第 1 轮：没有「上一家」，请求原样透传。
+    const first = await post(gateway, { model: 'steward:frugal', user: 'sess-1', messages })
+    assert.equal(first.status, 200)
+    assert.equal(calls[0]?.body.model, 'cheap-1')
+    const firstAssistant = (calls[0]?.body.messages as Array<Record<string, unknown>>)[1] as Record<string, unknown>
+    assert.equal(firstAssistant.reasoning_content, '旧的思考')
+
+    // 第 2 轮：切到最强火力（换了一家厂商），历史里上一家的私有字段要清掉，
+    // 但消息本身（也就是上下文）不能少。
+    const second = await post(gateway, { model: 'steward:max_power', user: 'sess-1', messages })
+    assert.equal(second.status, 200)
+    assert.equal(calls[1]?.body.model, 'strong-1')
+    const secondMessages = calls[1]?.body.messages as Array<Record<string, unknown>>
+    assert.equal(secondMessages.length, messages.length)
+    const secondAssistant = secondMessages[1] as Record<string, unknown>
+    assert.equal('reasoning_content' in secondAssistant, false)
+    assert.equal('reasoning_details' in secondAssistant, false)
+    assert.equal('cache_control' in secondAssistant, false)
+    assert.deepEqual(secondAssistant.content, [{ type: 'text', text: '看过了' }])
+  }, {
+    responses: [async () => jsonResponse(), async () => jsonResponse()],
+  })
 })
