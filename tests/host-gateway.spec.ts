@@ -6,13 +6,13 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { startGateway, generateToken, publishedModelIds, lastUsageFromSse, type Gateway } from '../src/host/gateway.ts'
+import { startGateway, generateToken, looksLikeLocalToken, publishedModelIds, resolveStartupToken, lastUsageFromSse, type Gateway } from '../src/host/gateway.ts'
 import { createRouter } from '../src/core/router.ts'
 import { createRouteLedgerStore } from '../src/host/ledger-store.ts'
 import { localDateKey } from '../src/core/ledger-doc.ts'
 import { model, provider } from './fixtures.ts'
 import { DEFAULT_CACHE } from '../src/core/pool-schema.ts'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PoolConfig } from '../src/core/types.ts'
@@ -101,6 +101,53 @@ test('令牌是随机且足够长', () => {
   const b = generateToken()
   assert.notEqual(a, b)
   assert.ok(a.length >= 40)
+})
+
+test('启动令牌：继承的环境变量优先于持久化令牌', () => {
+  // DSH 的 llm-pi-ai 可能在插件之前就把 apiKeyEnv 读走了；网关必须对齐它。
+  const inherited = 'A'.repeat(43)
+  assert.equal(resolveStartupToken('B'.repeat(43), inherited), inherited)
+})
+
+test('启动令牌：继承值不合法时回落持久化，都没有才生成', () => {
+  const persisted = 'C'.repeat(43)
+  assert.equal(resolveStartupToken(persisted, 'not-a-token'), persisted)
+  assert.equal(resolveStartupToken(persisted, undefined), persisted)
+  const generated = resolveStartupToken(undefined, undefined)
+  assert.ok(looksLikeLocalToken(generated))
+  assert.notEqual(generated, resolveStartupToken(undefined, undefined))
+})
+
+test('网关采用继承的 STEWARD_LOCAL_TOKEN：与 DSH 手里的钥匙对齐', async () => {
+  sharedRouter = createRouter(config())
+  const dir = await mkdtemp(join(tmpdir(), 'steward-token-'))
+  const statePath = join(dir, 'gateway.json')
+  const persisted = 'P'.repeat(43)
+  const inherited = 'Q'.repeat(43)
+  await writeFile(statePath, JSON.stringify({ token: persisted }), 'utf8')
+  const gateway = await startGateway({
+    config: () => config(),
+    router: () => sharedRouter,
+    secrets: () => new Map(),
+    fetchImpl: async () => jsonResponse(),
+    statePath,
+    env: { STEWARD_LOCAL_TOKEN: inherited },
+  })
+  try {
+    assert.equal(gateway.token(), inherited)
+    const aligned = await fetch(gateway.baseUrl() + '/models', {
+      headers: { authorization: 'Bearer ' + inherited },
+    })
+    assert.equal(aligned.status, 200)
+    // 旧令牌不再被接受：漂移修复不是「两把钥匙都留着」。
+    const stale = await fetch(gateway.baseUrl() + '/models', {
+      headers: { authorization: 'Bearer ' + persisted },
+    })
+    assert.equal(stale.status, 401)
+  } finally {
+    await gateway.close()
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('publishedModelIds 总是含 6 个虚拟 id，并跳过 offline 模型', () => {

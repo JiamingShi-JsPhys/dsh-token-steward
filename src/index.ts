@@ -31,7 +31,7 @@ import { createRouteLedgerStore } from './host/ledger-store.ts'
 import { createRouter, type StewardRouter } from './core/router.ts'
 import { inferIntent } from './core/intent.ts'
 import { credentialKind, resolveCredential } from './host/credentials.ts'
-import { startGateway, type Gateway } from './host/gateway.ts'
+import { startGateway, STEWARD_TOKEN_ENV, type Gateway } from './host/gateway.ts'
 import { makePanelRoutes } from './host/routes.ts'
 import { readUsageProjection } from './host/usage-bridge.ts'
 import { writeFileAtomic } from './host/atomic-file.ts'
@@ -40,8 +40,10 @@ import type { GatewayState, ImportScope, PoolConfig, RouteIntent, RoutingMode } 
 /**
  * profile 里 steward provider 的 `apiKeyEnv`。插件启动时要把它写进进程环境，
  * 否则 DSH 会把「管家」当成一家没有密钥的上游，从模型菜单里整个藏起来。
+ * 定义在 gateway 侧：网关启动时需要先读它——DSH 可能已经用它取过凭据，
+ * 网关必须对齐到 DSH 手里那把钥匙（见 resolveStartupToken）。
  */
-export const STEWARD_TOKEN_ENV = 'STEWARD_LOCAL_TOKEN'
+export { STEWARD_TOKEN_ENV } from './host/gateway.ts'
 
 /** 插件名（cordis 行 id 与日志前缀）。 */
 export const name = 'token-steward'

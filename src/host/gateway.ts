@@ -68,6 +68,11 @@ export interface GatewayOptions {
    * 提供时落 `cache.sqlite`，重启仍可命中。
    */
   cacheDirectory?: string
+  /**
+   * 读取「继承来的」本地令牌用的环境（默认 process.env）。
+   * 测试注入用；生产永远走真实进程环境。
+   */
+  env?: NodeJS.ProcessEnv
 }
 
 /** 从既有 gateway.json 里读回令牌（文件缺失或损坏返回 undefined）。 */
@@ -130,6 +135,39 @@ export function clampOutputBudget(body: Record<string, unknown>): Record<string,
 /** 生成一个本地令牌。 */
 export function generateToken(): string {
   return randomBytes(TOKEN_BYTES).toString('base64url')
+}
+
+/**
+ * DSH profile 里 steward provider 的 `apiKeyEnv`。
+ * 插件启动后把自己生成的令牌写进进程环境，llm-pi-ai 靠它取本地凭据。
+ */
+export const STEWARD_TOKEN_ENV = 'STEWARD_LOCAL_TOKEN'
+
+/** 本地令牌的形状：base64url，至少 32 字符（生成的是 43 字符）。 */
+const LOCAL_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,}$/
+
+/** 一个值看起来是否像我们发的本地令牌。 */
+export function looksLikeLocalToken(value: unknown): value is string {
+  return typeof value === 'string' && LOCAL_TOKEN_PATTERN.test(value)
+}
+
+/**
+ * 启动时选哪把令牌。
+ *
+ * **继承来的环境变量优先。** 这是 1.1.1 修掉的一个真机故障：DSH 的
+ * `llm-pi-ai` 可能在插件 apply 之前就把 `apiKeyEnv` 读进自己的凭据缓存——
+ * 那时进程里只有启动时从用户环境继承的 `STEWARD_LOCAL_TOKEN`，插件随后
+ * 再写 process.env 已经来不及。只要继承值与 gateway.json 漂移过一次
+ * （用户环境变量来自旧令牌、gateway.json 后来重建过），DSH 手里就是一把
+ * 旧钥匙，每次请求都被网关 401，界面显示「API 密钥无效 AUTH」。
+ *
+ * 因此：继承值是合法令牌形状就采用它，网关主动对齐到 DSH 已经拿着的钥匙。
+ * 两者从此不可能再漂移；用户环境变量缺失时才回落到持久化令牌。
+ */
+export function resolveStartupToken(persisted: string | undefined, inherited: string | undefined): string {
+  if (looksLikeLocalToken(inherited)) return inherited
+  if (looksLikeLocalToken(persisted)) return persisted
+  return generateToken()
 }
 
 /** 写一个 OpenAI 形状的错误响应。 */
@@ -216,7 +254,7 @@ export const VIRTUAL_MODEL_INFO: Record<string, { name: string, strengths: strin
   },
 }
 
-/** 网关公布的模型 id 列表：6 个虚拟 id + 矩阵里每个真实模型。 */
+/** 网关对外公布的模型 id 列表：6 个虚拟 id + 矩阵里每个真实模型。 */
 export function publishedModelIds(config: PoolConfig | undefined): string[] {
   const ids = [
     'steward:auto',
@@ -252,9 +290,15 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     options.router().noteUsage(provider, model, usage, now())
   }
   // 令牌持久化：复用 gateway.json 里已有的令牌（llm-pi-ai 的 apiKeyEnv 是静态
-  // 环境变量，令牌换了接线就断）。只在文件缺失或令牌非法时生成新的。
+  // 环境变量，令牌换了接线就断）。继承来的环境变量优先——DSH 可能已经把它
+  // 读进凭据缓存，网关必须对齐到 DSH 手里那把钥匙，而不是反过来。
   const persisted = await readPersistedToken(options.statePath)
-  const token = persisted ?? generateToken()
+  const inherited = (options.env ?? process.env)[STEWARD_TOKEN_ENV]
+  const token = resolveStartupToken(persisted, inherited)
+  if (persisted !== undefined && persisted !== token) {
+    // 不打印令牌本身，只说明发生了对齐。
+    log('info', 'gateway token adopted from ' + STEWARD_TOKEN_ENV + ' (persisted value differed)')
+  }
 
   // ── 本地精确响应缓存（routing.cache.exact_match，默认开启）────────
   // 命中即回放上次响应字节：不出站、不计费、不进健康状态机。
