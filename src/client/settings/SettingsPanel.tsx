@@ -141,6 +141,16 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
         </div>
       </div>
 
+      <button
+        type="button"
+        className={css.agentEntry}
+        data-dsh-part="agent-entry"
+        onClick={() => { void copyText('agentPrompt', props.t('vendors.agentPrompt')) }}
+      >
+        ＋ {props.t('vendors.agentEntry')}
+      </button>
+      {copied === 'agentPrompt' ? <div className={css.vendorNotice}>{props.t('vendors.agentPromptCopied')}</div> : null}
+
       <VendorsSection
         gateway={props.gateway}
         vendors={props.vendors}

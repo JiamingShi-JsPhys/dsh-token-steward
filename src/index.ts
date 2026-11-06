@@ -20,6 +20,7 @@ import { mkdir } from 'node:fs/promises'
 import { createPoolFileLoader } from './host/pool-file.ts'
 import { createVendorStore, coerceVendorsList, maskKey, type VendorsDocument } from './host/vendor-store.ts'
 import { discoverUpstreamModels } from './host/discovery.ts'
+import { executeStewardAction, STEWARD_TOOL_PARAMETERS, type StewardActionArgs, type StewardToolDeps } from './host/agent-tools.ts'
 import { synthesizePool, vendorIsRoutable } from './core/vendors.ts'
 import { DEFAULT_CACHE } from './core/pool-schema.ts'
 import type { VendorConfig } from './core/types.ts'
@@ -140,6 +141,8 @@ export async function apply(ctx: {
   logger?: (name: string) => { info(...args: unknown[]): void, warn(...args: unknown[]): void, error(...args: unknown[]): void }
   webServer?: { register(route: unknown): () => void }
   effect?: (fn: () => () => void, label?: string) => void
+  /** 可选服务探测（tools / skills 等按需获取）。 */
+  get?<T = unknown>(name: string): T | undefined
 }, config?: StewardConfigFields): Promise<void> {
   // 落盘自诊断第一站：Desktop 宿主不捕获 stdout，apply 是否被调用、在哪一步
   // 失败，只有写进文件才能从外部看见（provider-proxy 的 state.json 同款）。
@@ -377,6 +380,71 @@ export async function apply(ctx: {
     void usageNow(Date.now())
   } else {
     log.warn('webServer is not available; the panel routes are not mounted')
+  }
+
+  // ── Agent 工具：让 Agent 对话式管理矩阵（「让 Agent 帮我配置」）────
+  const toolDeps: StewardToolDeps = {
+    getVendorConfigs: () => vendorDoc.vendors.map((vendor) => ({ ...vendor })),
+    saveVendorConfigs: async (vendors) => {
+      vendorDoc = { ...vendorDoc, vendors }
+      usingVendors = vendorDoc.vendors.length > 0
+      configValue = currentPool()
+      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+      await vendorStore.save(vendorDoc)
+      await refreshSecrets()
+    },
+    setMode: async (mode) => {
+      router?.setMode(mode)
+      vendorDoc = { ...vendorDoc, mode }
+      await vendorStore.save(vendorDoc)
+    },
+    getMode: () => router?.getMode() ?? vendorDoc.mode,
+    gatewayBaseUrl: () => gateway?.baseUrl(),
+  }
+  const tools = ctx.get?.<{ register(tool: unknown): () => void }>('tools')
+  if (tools !== undefined && typeof tools.register === 'function') {
+    try {
+      disposers.push(tools.register({
+        name: 'token_steward_manage',
+        description: '管理 Token 管家模型矩阵：添加/移除厂商、启用/停用模型、给模型打擅长标签、切换调度模式。改动立即生效（热重载）。',
+        parameters: STEWARD_TOOL_PARAMETERS,
+        output: { schema: { type: 'string' } },
+        async execute(args: StewardActionArgs) {
+          return executeStewardAction(toolDeps, args)
+        },
+      }))
+      log.info('agent tool registered: token_steward_manage')
+    } catch (error) {
+      log.warn('agent tool registration failed: %s', error instanceof Error ? error.message : String(error))
+    }
+  }
+  const skills = ctx.get?.<{ register(skill: unknown): () => void }>('skills')
+  if (skills !== undefined && typeof skills.register === 'function') {
+    try {
+      disposers.push(skills.register({
+        name: 'token-steward',
+        description: '用对话管理 Token 管家模型矩阵（厂商/模型/标签/模式）',
+        content: [
+          '# Token 管家（模型矩阵）',
+          '',
+          '当用户想「接入某个模型厂商 / 启用某些模型 / 给模型打擅长标签 / 切换调度模式」时，使用 token_steward_manage 工具。',
+          '',
+          '工作流：',
+          '1. 先 action=show_status 看当前矩阵；',
+          '2. 接厂商：action=add_or_update_vendor，给 vendor_id / base_url / api_key（推荐 env:NAME 引用）/ enabled_models；',
+          '3. 勾模型：action=set_enabled_models；',
+          '4. 打标签：action=tag_model，标签用简单能力词（编程 / 文案 / 视频 / 做题 / 推理 / 多模态 / 快速 / 前端 …）；',
+          '5. 切模式：action=set_mode（frugal=极致便宜，balanced=效率优先，max_power=最强火力）。',
+          '',
+          '所有改动立即热生效，无需重启。密钥永不出现在你的回复里。',
+        ].join('\n'),
+        source: 'runtime',
+        provider: 'dsh-token-steward',
+      }))
+      log.info('runtime skill registered: token-steward')
+    } catch (error) {
+      log.warn('skill registration failed: %s', error instanceof Error ? error.message : String(error))
+    }
   }
 
   // ── 热重载 ──────────────────────────────────────────────

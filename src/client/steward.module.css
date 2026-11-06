@@ -734,3 +734,20 @@
   opacity: 0.6;
   line-height: 1.4;
 }
+
+/* 设置页底部：让 Agent 帮我配置（复制提示词） */
+.agentEntry {
+  width: 100%;
+  padding: 9px 0;
+  border: 1px dashed var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.4));
+  border-radius: 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary-foreground, inherit);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.agentEntry:hover {
+  border-color: var(--dsw-alias-brand-primary, #4d6bfe);
+  color: var(--dsw-alias-brand-primary, #4d6bfe);
+}
