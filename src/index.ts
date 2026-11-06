@@ -19,6 +19,7 @@ import { mkdir } from 'node:fs/promises'
 
 import { createPoolFileLoader } from './host/pool-file.ts'
 import { createVendorStore, coerceVendorsList, maskKey, type VendorsDocument } from './host/vendor-store.ts'
+import { discoverUpstreamModels } from './host/discovery.ts'
 import { synthesizePool, vendorIsRoutable } from './core/vendors.ts'
 import { DEFAULT_CACHE } from './core/pool-schema.ts'
 import type { VendorConfig } from './core/types.ts'
@@ -333,6 +334,10 @@ export async function apply(ctx: {
           })
         }
         return true
+      },
+      discover: async (vendorId: string, baseUrl: string, apiKey: string) => {
+        // 面板同源代理：宿主进程发起上游探测（浏览器跨源会被 CORS 拦截）。
+        return discoverUpstreamModels(vendorId, baseUrl, apiKey)
       },
       getVendors: () => ({
         mode: vendorDoc.mode,

@@ -272,25 +272,27 @@ function VendorsSection(props: {
     <div className={css.vendorsSection} data-dsh-part="vendors">
       <div className={css.metricLabel}>{t('vendors.title')}</div>
 
-      <div className={css.vendorTabs} role="tablist">
-        {tabs.map((tab) => {
-          const label = tab === 'custom' ? t('vendors.tabCustom') : catalog.find((vendor) => vendor.vendorId === tab)?.vendorName ?? tab
-          return (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === tab}
-              className={css.vendorTab}
-              data-active={activeTab === tab ? 'true' : 'false'}
-              onClick={() => { setActiveTab(tab); setNotice(undefined) }}
-            >
-              {label}
-            </button>
-          )
-        })}
-      </div>
+      <div className={css.vendorLayout}>
+        <nav className={css.vendorNav} role="tablist" aria-orientation="vertical">
+          {tabs.map((tab) => {
+            const label = tab === 'custom' ? t('vendors.tabCustom') : catalog.find((vendor) => vendor.vendorId === tab)?.vendorName ?? tab
+            return (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab}
+                className={css.vendorNavItem}
+                data-active={activeTab === tab ? 'true' : 'false'}
+                onClick={() => { setActiveTab(tab); setNotice(undefined) }}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </nav>
 
+        <div className={css.vendorPane}>
       {activeTab === 'anthropic' ? (
         <div className={css.vendorWarning} data-tone="danger">
           {t('vendors.anthropicWarning')}
@@ -373,6 +375,8 @@ function VendorsSection(props: {
           </label>
         ) : null
       )}
+        </div>
+      </div>
     </div>
   )
 }

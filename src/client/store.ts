@@ -169,9 +169,7 @@ export function createPanelStore(client: PanelClient): PanelStore {
   }
 
   async function discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<DiscoveredModel[]> {
-    const gateway = state.gateway
-    if (gateway === undefined) throw new Error('gateway is not running')
-    const body = await client.discoverModels(gateway, params)
+    const body = await client.discoverModels(params)
     return body.data
   }
 

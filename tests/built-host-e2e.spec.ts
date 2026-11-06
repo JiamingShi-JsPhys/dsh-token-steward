@@ -123,6 +123,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 
     // 四条面板路由都注册了。
     assert.deepEqual(routes.map((route) => route.path).sort(), [
+      '/api/token-steward/discover',
       '/api/token-steward/gateway',
       '/api/token-steward/mode',
       '/api/token-steward/reload',
@@ -224,7 +225,7 @@ test('打包后的 Host 半区在配置损坏时不挂网关，但也不抛错',
     }, {})
 
     // 配置非法 → 面板仍注册（好让用户看到红条），但没有网关状态文件。
-    assert.equal(routes.length, 5)
+    assert.equal(routes.length, 6)
     await assert.rejects(() => readFile(join(home, 'token-steward', 'gateway.json'), 'utf8'))
     assert.ok(warnings.some((line) => line.includes('no usable model pool')))
   } finally {

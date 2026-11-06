@@ -19,7 +19,7 @@ import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode, VendorConfig } 
 import type { StewardRouter } from '../core/router.ts'
 import { inferIntent } from '../core/intent.ts'
 import { cacheKeyOf, LruTtlCache, type CachedResponse } from '../core/response-cache.ts'
-import { matchTemplateModel, PROVIDER_TEMPLATES } from '../core/provider-templates.ts'
+import { discoverUpstreamModels } from './discovery.ts'
 import { dispatch, usageFromBody, type FetchLike } from './upstream.ts'
 import type { RouteLedgerStore } from './ledger-store.ts'
 import { modelKey } from '../core/router.ts'
@@ -338,65 +338,16 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       writeError(res, 400, 'bad-request', 'discovery needs base_url and api_key (or a saved vendor with both)')
       return
     }
-    const endpoint = target.replace(/\/+$/, '') + '/models'
     try {
-      const upstream = await fetchImpl(endpoint, {
-        method: 'GET',
-        headers: { authorization: 'Bearer ' + key },
-        signal: AbortSignal.timeout(15_000),
-      })
-      if (!upstream.ok) {
-        writeError(res, 502, 'upstream-failed', 'upstream /models responded ' + String(upstream.status))
-        return
-      }
-      const body: unknown = await upstream.json()
-      const ids = extractModelIds(body)
-      if (ids === undefined) {
-        writeError(res, 502, 'upstream-failed', 'upstream /models body is not an OpenAI list')
-        return
-      }
-      const template = PROVIDER_TEMPLATES.find((entry) => entry.vendorId === (vendor?.vendorId ?? ''))
+      const entries = await discoverUpstreamModels(vendor?.vendorId ?? '', target, key, { fetchImpl })
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-      res.end(JSON.stringify({
-        object: 'list',
-        vendor: vendorId ?? '',
-        data: ids.map((id) => {
-          const known = template !== undefined ? matchTemplateModel(template, id) : undefined
-          return {
-            id,
-            object: 'model',
-            name: known?.name ?? id,
-            tier: known?.tier ?? 'NA',
-            inCatalog: known !== undefined,
-            owned_by: 'upstream',
-          }
-        }),
-      }))
+      res.end(JSON.stringify({ object: 'list', vendor: vendorId ?? '', data: entries }))
     } catch (error) {
       writeError(res, 502, 'upstream-failed', 'model discovery failed: ' + messageOf(error))
     }
   }
 
-  /** OpenAI 形状 {data:[{id}]}（也容忍裸数组与 {models:[...]}）。 */
-  function extractModelIds(body: unknown): string[] | undefined {
-    const list = Array.isArray(body)
-      ? body
-      : body !== null && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)
-        ? (body as { data: unknown[] }).data
-        : body !== null && typeof body === 'object' && Array.isArray((body as { models?: unknown }).models)
-          ? (body as { models: unknown[] }).models
-          : undefined
-    if (list === undefined) return undefined
-    const ids: string[] = []
-    for (const entry of list) {
-      if (entry === null || typeof entry !== 'object') continue
-      const id = (entry as { id?: unknown }).id ?? (entry as { name?: unknown }).name
-      if (typeof id === 'string' && id !== '') ids.push(id)
-    }
-    return ids
-  }
-
-  async function runPlanned(
+    async function runPlanned(
     res: ServerResponse,
     config: PoolConfig,
     router: StewardRouter,

@@ -12,6 +12,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { RoutingMode } from '../core/types.ts'
+import { discoverUpstreamModels } from './discovery.ts'
 
 /** 面板路由前缀。 */
 export const API_PREFIX = '/api/token-steward'
@@ -77,6 +78,8 @@ export interface PanelApi {
   reload(): Promise<{ ok: boolean, status: string, error?: string }>
   /** 网关接线参数；未启动时为 undefined。 */
   gateway(): { baseUrl: string, token: string, modelIds: string[], port: number } | undefined
+  /** 同源发现代理：宿主向真实上游探测模型列表（浏览器跨源被 CORS 拦，必须代理）。 */
+  discover?(vendorId: string, baseUrl: string, apiKey: string): Promise<unknown>
   /** 当前厂家配置（密钥掩码）+ 持久化的全局模式；未实现时端点返回 503。 */
   getVendors?(): { mode: RoutingMode, vendors: VendorView[] }
   /** 整表保存厂家配置；apiKey 为空串表示「保留已存的明文」。 */
@@ -152,6 +155,50 @@ export function makePanelRoutes(api: PanelApi): StewardRoute[] {
         }
         const result = await api.reload()
         writeJson(res, 200, { ...result, ok: result.ok })
+      },
+    },
+    {
+      kind: 'exact',
+      path: API_PREFIX + '/discover',
+      handler: async (req, res) => {
+        if (!guard(res)) return
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+          return
+        }
+        if (req.method !== 'POST') {
+          writeJson(res, 405, { ok: false, error: 'use POST' })
+          return
+        }
+        if (api.discover === undefined) {
+          writeJson(res, 503, { ok: false, error: 'discovery is not available' })
+          return
+        }
+        const text = await readBody(req, 16 * 1024)
+        if (text === undefined) {
+          writeJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        let body: { vendorId?: unknown, baseUrl?: unknown, apiKey?: unknown }
+        try {
+          body = JSON.parse(text) as typeof body
+        } catch {
+          writeJson(res, 400, { ok: false, error: 'body must be JSON' })
+          return
+        }
+        const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl : ''
+        const apiKey = typeof body.apiKey === 'string' ? body.apiKey : ''
+        const vendorId = typeof body.vendorId === 'string' ? body.vendorId : ''
+        if (baseUrl === '' || apiKey === '') {
+          writeJson(res, 400, { ok: false, error: 'baseUrl and apiKey are required' })
+          return
+        }
+        try {
+          const data = await discoverUpstreamModels(vendorId, baseUrl, apiKey)
+          writeJson(res, 200, { ok: true, data })
+        } catch (error) {
+          writeJson(res, 502, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
       },
     },
     {

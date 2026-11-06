@@ -55,8 +55,8 @@ export interface PanelClient {
   vendors(): Promise<{ mode: RoutingMode, vendors: VendorView[], catalog: CatalogVendor[] }>
   /** 整表保存；apiKey 空串 = 保留已存明文。 */
   saveVendors(mode: RoutingMode, vendors: unknown): Promise<{ ok: boolean, error?: string }>
-  /** 探测上游真实模型列表（走网关的发现端点）。 */
-  discoverModels(gateway: GatewayInfo, params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<{ data: DiscoveredModel[] }>
+  /** 探测上游真实模型列表（同源面板路由，宿主代理上游——浏览器跨源会被 CORS 拦）。 */
+  discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<{ data: DiscoveredModel[] }>
 }
 
 /** fetch 的最小形状。 */
@@ -98,20 +98,13 @@ export function createPanelClient(fetchImpl?: FetchLike): PanelClient {
       if (!body.ok) throw new Error(body.error ?? 'save failed')
       return body
     },
-    async discoverModels(gateway, params) {
-      const search = new URLSearchParams()
-      if (params.vendor !== undefined) search.set('vendor', params.vendor)
-      if (params.baseUrl !== undefined && params.baseUrl !== '') search.set('base_url', params.baseUrl)
-      if (params.apiKey !== undefined && params.apiKey !== '') search.set('api_key', params.apiKey)
-      const response = await doFetch(gateway.baseUrl + '/models?' + search.toString(), {
-        headers: { authorization: 'Bearer ' + gateway.token },
-        signal: AbortSignal.timeout(PANEL_FETCH_TIMEOUT_MS),
+    async discoverModels(params) {
+      const body = await call<{ ok: boolean, data: DiscoveredModel[] }>('/discover', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(params),
       })
-      if (!response.ok) {
-        const detail = await response.json().catch(() => undefined) as { error?: { message?: string } } | undefined
-        throw new Error(detail?.error?.message ?? 'discovery failed: ' + String(response.status))
-      }
-      return await response.json() as { data: DiscoveredModel[] }
+      return body
     },
     async setMode(mode) {
       const body = await call<{ ok: boolean, mode: RoutingMode }>('/mode', {
