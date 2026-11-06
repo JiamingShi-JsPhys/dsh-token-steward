@@ -38,7 +38,6 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepare": "node scripts/build.mjs",
     "test": "node scripts/build.mjs && node --test \"tests/**/*.spec.ts\"",
     "test:only": "node --test \"tests/**/*.spec.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
