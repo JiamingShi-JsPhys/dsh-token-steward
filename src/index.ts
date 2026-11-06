@@ -538,15 +538,16 @@ export async function apply(ctx: {
       // 令牌是网关自己生成的，只有我们手里有——必须由我们写进进程环境。
       // 指望用户手工 export 是不可靠的：换个启动方式（比如从另一个 shell 拉起）
       // 变量就不在了，DSH 会认为这家没有密钥，直接把「管家」从模型菜单里藏掉。
-      const inheritedToken = process.env[STEWARD_TOKEN_ENV]
       process.env[STEWARD_TOKEN_ENV] = gateway.token()
       // 第三道保障：把当前令牌写回用户环境变量。下次从任何方式启动，继承到的
       // 都是网关照认的那把钥匙，而不是某个旧版本留下的值。写入失败不影响本次运行。
-      if (inheritedToken !== gateway.token()) {
-        void persistUserTokenEnv(gateway.token(), STEWARD_TOKEN_ENV).then((written) => {
-          if (!written) log.warn('cannot sync %s to the user environment; env wiring may drift', STEWARD_TOKEN_ENV)
-        })
-      }
+      //
+      // 必须**无条件写**：启动器（relaunch.ps1）会把 gateway.json 的令牌注入进程
+      // 环境，此时「继承值 == 网关令牌」成立，但系统里的用户环境变量可能仍是旧值；
+      // 只在「不一致才写」会漏掉这条路径，下次从开始菜单启动又漂移回去。
+      void persistUserTokenEnv(gateway.token(), STEWARD_TOKEN_ENV).then((written) => {
+        if (!written) log.warn('cannot sync %s to the user environment; env wiring may drift', STEWARD_TOKEN_ENV)
+      })
       const state: GatewayState = {
         appliedAt: Date.now(),
         pid: process.pid,
