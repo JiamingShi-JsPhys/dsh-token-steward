@@ -139,11 +139,42 @@ test('网关采用继承的 STEWARD_LOCAL_TOKEN：与 DSH 手里的钥匙对齐'
       headers: { authorization: 'Bearer ' + inherited },
     })
     assert.equal(aligned.status, 200)
-    // 旧令牌不再被接受：漂移修复不是「两把钥匙都留着」。
-    const stale = await fetch(gateway.baseUrl() + '/models', {
+    // 漂移窗口：旧持久化令牌也先接着，DSH 拿着它发来的那一个请求同样能过；
+    // 下次启动两边一致后，这个窗口自然关闭（见下一个用例）。
+    const driftWindow = await fetch(gateway.baseUrl() + '/models', {
       headers: { authorization: 'Bearer ' + persisted },
     })
-    assert.equal(stale.status, 401)
+    assert.equal(driftWindow.status, 200)
+  } finally {
+    await gateway.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('没有继承令牌时只认持久化那一把，别的合法令牌照样 401', async () => {
+  sharedRouter = createRouter(config())
+  const dir = await mkdtemp(join(tmpdir(), 'steward-token-'))
+  const statePath = join(dir, 'gateway.json')
+  const persisted = 'R'.repeat(43)
+  await writeFile(statePath, JSON.stringify({ token: persisted }), 'utf8')
+  const gateway = await startGateway({
+    config: () => config(),
+    router: () => sharedRouter,
+    secrets: () => new Map(),
+    fetchImpl: async () => jsonResponse(),
+    statePath,
+    env: {},
+  })
+  try {
+    assert.equal(gateway.token(), persisted)
+    const good = await fetch(gateway.baseUrl() + '/models', {
+      headers: { authorization: 'Bearer ' + persisted },
+    })
+    assert.equal(good.status, 200)
+    const other = await fetch(gateway.baseUrl() + '/models', {
+      headers: { authorization: 'Bearer ' + 'S'.repeat(43) },
+    })
+    assert.equal(other.status, 401)
   } finally {
     await gateway.close()
     await rm(dir, { recursive: true, force: true })

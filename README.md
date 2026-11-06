@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.1.1 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 488 条
+**版本：** 1.1.1 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 493 条
 
 > **如果它帮到了你，去仓库点一颗 Star 吧** —— 作者 **[@JiamingShi-JsPhys](https://github.com/JiamingShi-JsPhys)**。
 > 一个 Star 不花什么力气，但对一个人维护的插件来说是继续修 bug、补厂商、跟进 DSH 新版本的直接动力。
@@ -216,7 +216,7 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 ### 三个踩过的坑，务必照抄
 
 - **`defaultMaxTokens: 65536`**。`llm-pi-ai` 的默认值是 128000，会原样写进请求的 `max_tokens`。Agnes 这类上游硬上限是 65536，直接回 400 `max_tokens 不能超过 65536`，会话当场失败。网关侧还会再按窗口压一次，但 profile 里的初值先写对能省掉一整类报错。
-- **`STEWARD_LOCAL_TOKEN` 必须和网关一致。** 插件的 `apiKeyEnv` 指向进程环境里的本地令牌，而 DSH 可能在插件挂载之前就把它读进凭据缓存。系统用户环境变量里如果还留着旧令牌（换过 `gateway.json`、装过旧版本），每个请求都会被网关 401，界面显示「API 密钥无效 AUTH」。1.1.1 起网关**优先采用继承来的合法令牌**，主动对齐到 DSH 手里那把钥匙——两边不会再漂移；面板「管家设置 → 刷新」里能看到当前实际生效的令牌。
+- **`STEWARD_LOCAL_TOKEN` 必须和网关一致。** 插件的 `apiKeyEnv` 指向进程环境里的本地令牌，而 DSH 可能在插件挂载之前就把它读进凭据缓存。系统用户环境变量里如果还留着旧令牌（换过 `gateway.json`、装过旧版本），每个请求都会被网关 401，界面显示「API 密钥无效 AUTH」。1.1.1 起有三道保障：① 网关**优先采用继承来的合法令牌**，主动对齐到 DSH 手里那把钥匙；② 启动时若发现持久化令牌与继承值不一致，**漂移窗口内两把都接住**（下次启动自然收敛成一把）；③ 每次启动把当前令牌**写回用户环境变量**（Windows），下次无论从开始菜单还是脚本启动都继承到正确的一把。面板「管家设置 → 刷新」里能看到当前实际生效的令牌。
 - **`apiKeyEnv: STEWARD_LOCAL_TOKEN`，不要写 `apiKey`**。`llm-pi-ai` 的 provider schema **没有 `apiKey` 字段**——写了会被静默忽略——凭据只通过 `apiKeyEnv` 从 `~/.dsh/.credentials.yaml` 的 `refs:` 解析。插件在网关启动时自己把本地令牌写进 `process.env.STEWARD_LOCAL_TOKEN`，所以两边名字必须一致，否则报 `No API key for provider: steward`。
 
 端口默认 51741，可用 `gatewayPort` 配置改成 `0`（系统分配）或固定值；实际地址与令牌随时可以在「管家设置」里一键复制。
@@ -299,7 +299,7 @@ model_pool.example.yaml  矩阵配置样例
 ```bash
 npm install
 npm run build      # 产出 lib/index.js 与 lib/client.js
-npm test           # 先构建，再跑全部 488 条断言
+npm test           # 先构建，再跑全部 493 条断言
 npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）
 ```
 

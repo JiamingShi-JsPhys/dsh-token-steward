@@ -299,6 +299,26 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     // 不打印令牌本身，只说明发生了对齐。
     log('info', 'gateway token adopted from ' + STEWARD_TOKEN_ENV + ' (persisted value differed)')
   }
+  /**
+   * 网关认的令牌：主令牌 + 漂移窗口里的旧持久化令牌。
+   *
+   * 多重保障：DSH 可能在插件挂载前就把 `apiKeyEnv` 读进了凭据缓存，手里
+   * 拿着一把旧钥匙。主令牌已经通过 resolveStartupToken 对齐到继承值；这里
+   * 再把「上一次持久化的那把」临时并入，保证对齐生效前的那一个请求也不会
+   * 401。下次启动时两边已经一致，名单自然收缩回一把钥匙。
+   * 两把都是本机用户自己目录里的令牌，范围仍只限回环。
+   */
+  const acceptedTokens = new Set<string>([token])
+  if (looksLikeLocalToken(persisted) && persisted !== token) {
+    acceptedTokens.add(persisted)
+    log('warn', 'persisted gateway token differs from the inherited one; accepting both until the next restart')
+  }
+  const acceptsToken = (provided: string): boolean => {
+    for (const expected of acceptedTokens) {
+      if (tokenMatches(expected, provided)) return true
+    }
+    return false
+  }
 
   // ── 本地精确响应缓存（routing.cache.exact_match，默认开启）────────
   // 命中即回放上次响应字节：不出站、不计费、不进健康状态机。
@@ -345,7 +365,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       return
     }
 
-    if (!tokenMatches(token, bearerOf(req))) {
+    if (!acceptsToken(bearerOf(req))) {
       writeError(res, 401, 'unauthorized', 'missing or invalid local gateway token')
       return
     }
