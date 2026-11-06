@@ -395,7 +395,10 @@ function VendorsSection(props: {
   }
 
   function updateDraft(tab: TabId, patch: Partial<VendorDraft>): void {
-    setDrafts((previous) => ({ ...previous, [tab]: { ...draftOf(tab), ...patch } }))
+    // 基线必须取队列里最新的那一份草稿（previous），不能取本次渲染闭包里的
+    // draftOf()：勾两个模型、改价再勾选这类连续操作里，第二次会拿着第一次之前的
+    // 旧草稿覆盖回去，用户看到的就是「勾了、保存、结果一个都没勾上」。
+    setDrafts((previous) => ({ ...previous, [tab]: { ...(previous[tab] ?? draftOf(tab)), ...patch } }))
   }
 
   async function fetchModels(tab: TabId): Promise<void> {
