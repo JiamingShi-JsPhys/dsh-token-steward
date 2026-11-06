@@ -387,6 +387,10 @@ export interface ModelCardView {
   tier?: string
   /** 六维评分；legacy 配置为 undefined，卡片不渲染数值框。 */
   dimensions?: DimensionSet
+  strengths?: string
+  imageInput?: boolean
+  imageOutput?: boolean
+  videoOutput?: boolean
   capabilities: CapabilityTag[]
   costLevel: CostLevel
   contextWindow: number

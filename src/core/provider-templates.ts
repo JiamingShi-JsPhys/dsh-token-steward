@@ -26,6 +26,11 @@ export interface TemplateModel {
   costPer1kOutput: number | null
   capabilities: string[]
   scores: DimensionSet
+  /** 擅长什么（一句话）。 */
+  strengths?: string
+  imageInput?: boolean
+  imageOutput?: boolean
+  videoOutput?: boolean
 }
 
 /** 一家厂商（评分表的一节）。 */
@@ -46,6 +51,18 @@ function dims(reasoning: DimensionScore, longContext: DimensionScore, coding: Di
 }
 
 /** 评分表没有的维度不存在——六个键一个不能少。 */
+/** 未评分厂商的中性六维：不编造数值，路由按 50 处理，评级显示 NA。 */
+function neutralScores(): DimensionSet {
+  return {
+    reasoning: dim(50, 'NA'),
+    longContext: dim(50, 'NA'),
+    coding: dim(50, 'NA'),
+    agentic: dim(50, 'NA'),
+    proWork: dim(50, 'NA'),
+    factuality: dim(50, 'NA'),
+  }
+}
+
 export const DIMENSION_KEYS: readonly DimensionKey[] = ['reasoning', 'longContext', 'coding', 'agentic', 'proWork', 'factuality']
 
 export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
@@ -99,6 +116,36 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     models: [
       { id: 'deepseek-v4-1-flash-1017', name: 'DeepSeek V4.1 Flash 1017', tier: 'A+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(62.4, 'A'), dim(51.8, 'A+'), dim(69.4, 'S'), dim(68.6, 'A+'), dim(60.1, 'SS'), dim(52.4, 'B+')) },
       { id: 'deepseek-v4-pro-0813', name: 'DeepSeek V4 Pro 0813', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(53.9, 'B'), dim(48.0, 'A'), dim(57.2, 'B+'), dim(41.1, 'D'), dim(49.7, 'B+'), dim(50.4, 'B')) },
+    ],
+  },
+  {
+    // 火山方舟（豆包）。注意：方舟上每个模型常以「推理接入点」id 暴露，
+    // 面板里的「测试连接并拉取模型」会列出账号可用的真实 id，勾选即可。
+    vendorId: 'doubao',
+    vendorName: '豆包 Doubao',
+    officialUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    models: [
+      { id: 'doubao-seed-1-6', name: 'Doubao Seed 1.6', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: neutralScores(), strengths: '旗舰多模态：复杂推理、智能体与工具调用，支持图片输入', imageInput: true },
+      { id: 'doubao-seed-1-6-flash', name: 'Doubao Seed 1.6 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'fast', 'vision'], scores: neutralScores(), strengths: '低延迟多模态：日常任务与图片理解', imageInput: true },
+      { id: 'doubao-1-5-pro-32k', name: 'Doubao 1.5 Pro 32K', tier: 'NA', contextWindow: 32_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengths: '上一代 Pro：中文写作与长文本稳定' },
+      { id: 'doubao-1-5-lite-32k', name: 'Doubao 1.5 Lite 32K', tier: 'NA', contextWindow: 32_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast'], scores: neutralScores(), strengths: '轻量快速：高并发的简单任务' },
+    ],
+  },
+  {
+    // Agnes（模型清单来自本机真实 /models 探测，见 vendors.spec 同源验证）。
+    vendorId: 'agnes',
+    vendorName: 'Agnes',
+    officialUrl: 'https://api.agnes-ai.cn/v1',
+    models: [
+      { id: 'agnes-3-0-flash', name: 'Agnes 3.0 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding'], scores: neutralScores(), strengths: '新一代快速文本：日常对话与轻任务' },
+      { id: 'agnes-2-5-pro', name: 'Agnes 2.5 Pro', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengths: 'Pro 文本：复杂任务与长回答' },
+      { id: 'agnes-2-5-pro-alpha', name: 'Agnes 2.5 Pro Alpha', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengths: 'Pro 内测变体：优先体验新特性' },
+      { id: 'agnes-2-5-pro-beta', name: 'Agnes 2.5 Pro Beta', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengths: 'Pro 内测变体：优先体验新特性' },
+      { id: 'agnes-2-5-flash', name: 'Agnes 2.5 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding'], scores: neutralScores(), strengths: '轻量快速文本' },
+      { id: 'agnes-image-2-5-flash', name: 'Agnes Image 2.5 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['image_gen'], scores: neutralScores(), strengths: '图片生成（文生图，新一代）', imageOutput: true },
+      { id: 'agnes-image-2-1-flash', name: 'Agnes Image 2.1 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['image_gen'], scores: neutralScores(), strengths: '图片生成（文生图，上一代）', imageOutput: true },
+      { id: 'agnes-video-2-5', name: 'Agnes Video 2.5', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['video_gen'], scores: neutralScores(), strengths: '视频生成（文生视频）', videoOutput: true },
+      { id: 'agnes-video-2-5-flash', name: 'Agnes Video 2.5 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['video_gen'], scores: neutralScores(), strengths: '视频生成（文生视频，快速）', videoOutput: true },
     ],
   },
   {
@@ -178,6 +225,7 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
 /** 面板厂家 Tab 的展示顺序（产品指定的九家在前，其余目录厂商随后，Custom 永远最后）。 */
 export const VENDOR_TAB_ORDER: readonly string[] = [
   'anthropic', 'openai', 'google', 'deepseek', 'alibaba', 'moonshot', 'zhipu', 'xiaomi', 'minimax',
+  'doubao', 'agnes',
 ]
 
 /** 把任意 id 归一化成可比形态：小写 + 去掉分隔符。 */
@@ -211,6 +259,10 @@ export function templateModelToInfo(vendor: TemplateVendor, model: TemplateModel
     costPer1kOutput: model.costPer1kOutput,
     capabilities: [...model.capabilities],
     scores: { ...model.scores },
+    ...(model.strengths !== undefined ? { strengths: model.strengths } : {}),
+    ...(model.imageInput === true ? { imageInput: true } : {}),
+    ...(model.imageOutput === true ? { imageOutput: true } : {}),
+    ...(model.videoOutput === true ? { videoOutput: true } : {}),
   }
 }
 

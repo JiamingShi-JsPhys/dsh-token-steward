@@ -547,6 +547,17 @@
   gap: 2px;
   min-width: 176px;
   flex: none;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.vendorNavGroup { display: flex; flex-direction: column; gap: 2px; }
+
+.vendorNavGroupLabel {
+  font-size: 10.5px;
+  opacity: 0.5;
+  letter-spacing: 0.1em;
+  padding: 6px 12px 2px;
 }
 
 .vendorNavItem {
@@ -680,6 +691,14 @@
   opacity: 0.8;
 }
 
+.modelCheckBody { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+
+.modelCheckLine { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+
+.modelCheckBadges { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.modelCheckStrengths { font-size: 10.5px; opacity: 0.6; }
+
 /* ── 六维数值框 + Tier 徽标（模型卡）───────────────────────────── */
 
 .tierBadge {
@@ -707,4 +726,11 @@
   border-radius: 5px;
   padding: 1px 6px;
   background: transparent;
+}
+
+/* 模型卡：擅长一句话 */
+.strengths {
+  font-size: 10.5px;
+  opacity: 0.6;
+  line-height: 1.4;
 }

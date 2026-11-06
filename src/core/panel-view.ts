@@ -88,6 +88,10 @@ export interface ModelCardFace {
   costLevelLabel: string
   costLevel: ModelCardView['costLevel']
   health: ModelCardView['health']
+  strengths: string | undefined
+  imageInput: boolean
+  imageOutput: boolean
+  videoOutput: boolean
   healthLabel: string
   /** 冷却/熔断剩余时间，如「28s」；无倒计时时 undefined。 */
   resumeIn?: string
@@ -136,6 +140,10 @@ export function modelCardFace(card: ModelCardView, now: number): ModelCardFace {
     costText: formatCost(card.todayCost),
     cacheText: formatPercent(card.cacheHitRate),
     unpriced: card.todayCost === null,
+    strengths: card.strengths,
+    imageInput: card.imageInput === true,
+    imageOutput: card.imageOutput === true,
+    videoOutput: card.videoOutput === true,
   }
 }
 

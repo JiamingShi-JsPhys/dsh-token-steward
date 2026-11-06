@@ -49,8 +49,15 @@ export function ModelCard(props: ModelCardProps): ReactNode {
         {face.capabilities.map((capability) => (
           <span key={capability} className={css.chip}>{capability}</span>
         ))}
+        {face.imageInput ? <span className={css.chip}>{props.t('models.imageInput')}</span> : null}
+        {face.imageOutput ? <span className={css.chip}>{props.t('models.imageOutput')}</span> : null}
+        {face.videoOutput ? <span className={css.chip}>{props.t('models.videoOutput')}</span> : null}
         {face.unpriced ? <span className={css.chip} data-unpriced="true">{props.t('models.unpriced')}</span> : null}
       </div>
+
+      {face.strengths !== undefined ? (
+        <div className={css.strengths} data-dsh-part="strengths">{props.t('models.strengths')}: {face.strengths}</div>
+      ) : null}
 
       <div className={css.cardStats}>
         <span className={css.statLabel}>{props.t('models.inflight')}</span>

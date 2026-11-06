@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { MatrixSnapshot, RoutingMode, VendorConfig } from '../../core/types.ts'
 import type { CatalogVendor, DiscoveredModel, VendorView } from '../api.ts'
 import { MODE_HINT, MODE_LABEL, MODE_ORDER } from '../../core/format.ts'
-import { PROVIDER_TEMPLATES, VENDOR_TAB_ORDER } from '../../core/provider-templates.ts'
+import { matchTemplateModel, PROVIDER_TEMPLATES, VENDOR_TAB_ORDER } from '../../core/provider-templates.ts'
 import css from '../steward.module.css'
 
 /** 厂家 Tab 的形态：目录厂商 + Custom。 */
@@ -165,13 +165,18 @@ function VendorsSection(props: {
   const catalog = props.vendors?.catalog ?? catalogFromTemplates()
   const saved = props.vendors?.vendors ?? []
 
-  /** Tab 顺序：产品指定的九家在前，其余目录厂商随后，Custom 最后。 */
-  const tabs = useMemo(() => {
-    const known = catalog.map((vendor) => vendor.vendorId)
-    const ordered = VENDOR_TAB_ORDER.filter((id) => known.includes(id))
-    const rest = known.filter((id) => !ordered.includes(id))
-    return [...ordered, ...rest, 'custom']
-  }, [catalog])
+  /** 左栏分组：内置（目录厂商）+ 自定义（保存的自定义厂商 + 添加入口）。 */
+  const groups = useMemo(() => {
+    const catalogIds = new Set(catalog.map((vendor) => vendor.vendorId))
+    const primary = VENDOR_TAB_ORDER.filter((id) => catalogIds.has(id))
+    const restBuiltIn = catalog.map((vendor) => vendor.vendorId).filter((id) => !primary.includes(id))
+    const savedCustom = saved.filter((vendor) => !catalogIds.has(vendor.vendorId)).map((vendor) => vendor.vendorId)
+    return [
+      { label: t('vendors.groupBuiltIn'), items: [...primary, ...restBuiltIn] },
+      { label: t('vendors.groupCustom'), items: [...savedCustom, 'custom'] },
+    ]
+  }, [catalog, saved, t])
+  const tabs = useMemo(() => groups.flatMap((group) => group.items), [groups])
 
   const [activeTab, setActiveTab] = useState<TabId>(tabs[0] ?? 'custom')
   const [drafts, setDrafts] = useState<Record<string, VendorDraft>>({})
@@ -274,22 +279,27 @@ function VendorsSection(props: {
 
       <div className={css.vendorLayout}>
         <nav className={css.vendorNav} role="tablist" aria-orientation="vertical">
-          {tabs.map((tab) => {
-            const label = tab === 'custom' ? t('vendors.tabCustom') : catalog.find((vendor) => vendor.vendorId === tab)?.vendorName ?? tab
-            return (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab}
-                className={css.vendorNavItem}
-                data-active={activeTab === tab ? 'true' : 'false'}
-                onClick={() => { setActiveTab(tab); setNotice(undefined) }}
-              >
-                {label}
-              </button>
-            )
-          })}
+          {groups.map((group) => (
+            <div key={group.label} className={css.vendorNavGroup}>
+              <div className={css.vendorNavGroupLabel}>{group.label}</div>
+              {group.items.map((tab) => {
+                const label = tab === 'custom' ? t('vendors.tabCustom') : catalog.find((vendor) => vendor.vendorId === tab)?.vendorName ?? tab
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    className={css.vendorNavItem}
+                    data-active={activeTab === tab ? 'true' : 'false'}
+                    onClick={() => { setActiveTab(tab); setNotice(undefined) }}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
         <div className={css.vendorPane}>
@@ -345,18 +355,42 @@ function VendorsSection(props: {
 
       {checkList.length > 0 ? (
         <div className={css.modelCheckList} data-dsh-part="vendor-models">
-          {checkList.map((entry) => (
-            <label key={entry.id} className={css.modelCheckRow}>
-              <input
-                type="checkbox"
-                checked={draft.enabledModels.includes(entry.id)}
-                onChange={() => { toggleModel(activeTab, entry.id) }}
-              />
-              <span className={css.modelCheckName}>{entry.name}</span>
-              <code className={css.modelCheckId}>{entry.id}</code>
-              <span className={css.modelCheckTier}>{entry.inCatalog ? '[' + entry.tier + ']' : '[' + t('vendors.uncatalogued') + ']'}</span>
-            </label>
-          ))}
+          {checkList.map((entry) => {
+            // 标注来自本地静态目录（与宿主同源），匹配走归一化（上游 id 与目录 id 的分隔符可能不同）。
+            const activeTemplate = PROVIDER_TEMPLATES.find((vendor) => vendor.vendorId === activeTab)
+            const template = activeTemplate !== undefined ? matchTemplateModel(activeTemplate, entry.id) : undefined
+            const badges: string[] = []
+            if (template?.imageInput === true) badges.push(t('models.imageInput'))
+            if (template?.imageOutput === true) badges.push(t('models.imageOutput'))
+            if (template?.videoOutput === true) badges.push(t('models.videoOutput'))
+            const multimodal = template?.imageInput === true || template?.imageOutput === true || template?.videoOutput === true
+              || template?.capabilities.includes('vision') === true
+            if (multimodal) badges.unshift(t('models.multimodal'))
+            return (
+              <label key={entry.id} className={css.modelCheckRow}>
+                <input
+                  type="checkbox"
+                  checked={draft.enabledModels.includes(entry.id)}
+                  onChange={() => { toggleModel(activeTab, entry.id) }}
+                />
+                <span className={css.modelCheckBody}>
+                  <span className={css.modelCheckLine}>
+                    <span className={css.modelCheckName}>{entry.name}</span>
+                    <code className={css.modelCheckId}>{entry.id}</code>
+                    <span className={css.modelCheckTier}>{entry.inCatalog ? '[' + entry.tier + ']' : '[' + t('vendors.uncatalogued') + ']'}</span>
+                  </span>
+                  {badges.length > 0 ? (
+                    <span className={css.modelCheckBadges}>
+                      {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
+                    </span>
+                  ) : null}
+                  {template?.strengths !== undefined ? (
+                    <span className={css.modelCheckStrengths}>{t('models.strengths')}: {template.strengths}</span>
+                  ) : null}
+                </span>
+              </label>
+            )
+          })}
         </div>
       ) : (
         activeTab === 'custom' ? (

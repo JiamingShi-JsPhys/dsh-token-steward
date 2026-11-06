@@ -63,6 +63,13 @@ export const zh = {
   'vendors.noGateway': '网关未启动：先用下方接线信息接入并重启 DSH',
   'vendors.manualIds': '手动输入模型 ID（每行一个）',
   'vendors.uncatalogued': '未收录',
+  'models.multimodal': '多模态',
+  'models.imageInput': '图入',
+  'models.imageOutput': '图出',
+  'models.videoOutput': '视频出',
+  'models.strengths': '擅长',
+  'vendors.groupBuiltIn': '内置',
+  'vendors.groupCustom': '自定义',
 } as const
 
 export type StewardLocaleKey = keyof typeof zh
@@ -125,4 +132,11 @@ export const en: Record<StewardLocaleKey, string> = {
   'vendors.noGateway': 'gateway is not running: wire it up below and restart DSH first',
   'vendors.manualIds': 'Model IDs, one per line',
   'vendors.uncatalogued': 'uncatalogued',
+  'models.multimodal': 'MULTIMODAL',
+  'models.imageInput': 'IMG-IN',
+  'models.imageOutput': 'IMG-OUT',
+  'models.videoOutput': 'VIDEO-OUT',
+  'models.strengths': 'strengths',
+  'vendors.groupBuiltIn': 'Built-in',
+  'vendors.groupCustom': 'Custom vendors',
 }
