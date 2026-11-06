@@ -139,11 +139,11 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     vendorName: 'Agnes',
     officialUrl: 'https://api.agnes-ai.cn/v1',
     models: [
-      { id: 'agnes-3-0-flash', name: 'Agnes 3.0 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding'], scores: neutralScores(), strengthTags: ['快速', '编程'] },
-      { id: 'agnes-2-5-pro', name: 'Agnes 2.5 Pro', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengthTags: ['推理'] },
-      { id: 'agnes-2-5-pro-alpha', name: 'Agnes 2.5 Pro Alpha', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengthTags: ['推理'] },
-      { id: 'agnes-2-5-pro-beta', name: 'Agnes 2.5 Pro Beta', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengthTags: ['推理'] },
-      { id: 'agnes-2-5-flash', name: 'Agnes 2.5 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding'], scores: neutralScores(), strengthTags: ['快速'] },
+      { id: 'agnes-3-0-flash', name: 'Agnes 3.0 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding', 'tool-use'], scores: neutralScores(), strengthTags: ['快速', '编程'] },
+      { id: 'agnes-2-5-pro', name: 'Agnes 2.5 Pro', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
+      { id: 'agnes-2-5-pro-alpha', name: 'Agnes 2.5 Pro Alpha', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
+      { id: 'agnes-2-5-pro-beta', name: 'Agnes 2.5 Pro Beta', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
+      { id: 'agnes-2-5-flash', name: 'Agnes 2.5 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding', 'tool-use'], scores: neutralScores(), strengthTags: ['快速'] },
       { id: 'agnes-image-2-5-flash', name: 'Agnes Image 2.5 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['image_gen'], scores: neutralScores(), strengthTags: ['图像生成'], imageOutput: true },
       { id: 'agnes-image-2-1-flash', name: 'Agnes Image 2.1 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['image_gen'], scores: neutralScores(), strengthTags: ['图像生成'], imageOutput: true },
       { id: 'agnes-video-2-5', name: 'Agnes Video 2.5', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['video_gen'], scores: neutralScores(), strengthTags: ['视频'], videoOutput: true },
@@ -290,7 +290,7 @@ export function unknownModelInfo(id: string, name?: string): ModelInfo {
     contextWindow: 128_000,
     costPer1kInput: null,
     costPer1kOutput: null,
-    capabilities: ['coding', 'reasoning'],
+    capabilities: ['coding', 'reasoning', 'tool-use'],
     scores,
   }
 }

@@ -168,3 +168,17 @@ test('模式切换使 steward:auto 的缓存失效', async () => {
     assert.equal(calls.length, 2, '模式变了，同一个 prompt 必须重新选路')
   }, { exactMatch: true })
 })
+
+test('回归：Agent 循环永远带 tools——目录缺 tool-use 的模型也能被 Agent 循环使用', async () => {
+  await withGateway(async (gateway, calls) => {
+    // custom 厂商（unknownModelInfo 形态：未收录模型）+ 带 tools 的真实 Agent 请求
+    const toolsBody = {
+      model: 'custom/Qwen',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'run_code', parameters: {} } }],
+    }
+    const response = await post(gateway, toolsBody)
+    assert.equal(response.status, 200, '未知模型默认带 tool-use，不再被硬过滤误杀')
+    assert.equal(calls.length, 1)
+  }, { exactMatch: false })
+})
