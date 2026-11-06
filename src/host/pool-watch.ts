@@ -7,7 +7,7 @@
  *
  * 监听失败不算致命：拿不到 watch 就退化成「只在启动时读一次」，路由照常工作。
  */
-import { watch, type FSWatcher } from 'node:fs'
+import { readFileSync, watch, type FSWatcher } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 
 /** 去抖窗口：编辑器一次保存引发的一串事件合并成一次重载。 */
@@ -97,7 +97,14 @@ export function createPoolWatcher(
 
   function start(): void {
     if (watcher !== undefined || stopped) return
-    void content().then((initial) => { lastContent = initial })
+    // 基线必须同步读：异步读有可能在第一次事件之后才落地，于是把「刚写进去的
+    // 新内容」当成基线，第一次保存就被误判成「没变」，热重载整条链路静默失效。
+    // 配置文件很小，同步读一次不值得为它冒这个竞态。
+    try {
+      lastContent = readFileSync(path, 'utf8')
+    } catch {
+      lastContent = undefined
+    }
     try {
       watcher = watch(path, { persistent: false }, (eventType) => {
         schedule(eventType === 'rename' ? 'renamed' : 'changed')
