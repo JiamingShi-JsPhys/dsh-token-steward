@@ -215,7 +215,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       const config = options.config()
       const ids = publishedModelIds(config)
       // AI 可读：每个模型带擅长描述与标签（真实上游模型才有多余信息）。
-      const byId = new Map(config?.providers.flatMap((provider) => provider.models.map((model) => [provider.provider_name + '/' + model.id, model] as const)) ?? [])
+      const byId = new Map(config?.providers.flatMap((provider) => provider.models.map((model) => [model.id, model] as const)) ?? [])
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify({
         object: 'list',
