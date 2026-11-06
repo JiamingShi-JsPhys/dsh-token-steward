@@ -15,15 +15,17 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { access, mkdir, readFile, readdir } from 'node:fs/promises'
 
 import { createPoolFileLoader } from './host/pool-file.ts'
 import { createVendorStore, coerceVendorsList, maskKey, type VendorsDocument } from './host/vendor-store.ts'
+import { harnessProviders, harnessVendor, mergeImportedVendors, selectHarnessProviders, type HarnessProvider } from './host/harness-import.ts'
+import { HARNESS_DEFAULT_MAX_TOKENS, resolveSyncVendorId, syncInputFromVendor, upsertHarnessProvider, type HarnessSyncInput } from './host/harness-sync.ts'
 import { discoverUpstreamModels } from './host/discovery.ts'
 import { executeStewardAction, STEWARD_TOOL_PARAMETERS, type StewardActionArgs, type StewardToolDeps } from './host/agent-tools.ts'
-import { synthesizePool, vendorIsRoutable } from './core/vendors.ts'
+import { synthesizePool, templateVendors, vendorEndpoint, vendorIsRoutable } from './core/vendors.ts'
 import { DEFAULT_CACHE } from './core/pool-schema.ts'
-import type { VendorConfig } from './core/types.ts'
 import { createPoolWatcher } from './host/pool-watch.ts'
 import { createRouteLedgerStore } from './host/ledger-store.ts'
 import { createRouter, type StewardRouter } from './core/router.ts'
@@ -32,7 +34,13 @@ import { startGateway, type Gateway } from './host/gateway.ts'
 import { makePanelRoutes } from './host/routes.ts'
 import { readUsageProjection } from './host/usage-bridge.ts'
 import { writeFileAtomic } from './host/atomic-file.ts'
-import type { GatewayState, PoolConfig, RoutingMode } from './core/types.ts'
+import type { GatewayState, ImportScope, PoolConfig, RoutingMode } from './core/types.ts'
+
+/**
+ * profile 里 steward provider 的 `apiKeyEnv`。插件启动时要把它写进进程环境，
+ * 否则 DSH 会把「管家」当成一家没有密钥的上游，从模型菜单里整个藏起来。
+ */
+export const STEWARD_TOKEN_ENV = 'STEWARD_LOCAL_TOKEN'
 
 /** 插件名（cordis 行 id 与日志前缀）。 */
 export const name = 'token-steward'
@@ -116,20 +124,107 @@ export function resolveConfig(config?: StewardConfigFields): ResolvedConfig {
   }
 }
 
-/** YAML 解码器的惰性加载：宿主自带 yaml，取不到时给出可读失败。 */
-async function loadYamlDecoder(): Promise<(text: string) => unknown> {
+/**
+ * 只在 llm-pi-ai.providers 下写一条 provider，其余内容（含注释）原样保留。
+ *
+ * 用 `yaml` 的 parseDocument：它把注释挂在节点上，toString 会带着走。
+ * 拿不到这个模块就返回 undefined，调用方退回「解析成对象再整体序列化」的老路
+ * （那条路会丢注释，所以只作兜底）。
+ */
+async function writeProviderPreservingComments(text: string, input: HarnessSyncInput & { apiKey: string }): Promise<string | undefined> {
+  type Node = {
+    items?: Node[]
+    contents?: Node
+    get?: (key: string) => unknown
+    set?: (key: string, value: unknown) => void
+    toString?: () => string
+  }
+  try {
+    const module = await import('yaml') as { parseDocument?: (text: string) => Node & { createNode?: (value: unknown) => unknown, toString?: () => string } }
+    if (typeof module.parseDocument !== 'function') return undefined
+    const doc = module.parseDocument(text)
+    const root = doc.contents
+    if (root === undefined) return undefined
+    const entries: Node[] = Array.isArray(root.items) ? root.items : []
+    const findIn = (node: Node): unknown => (typeof node.get === 'function' ? node.get('name') : undefined)
+    let entry = entries.find((item) => String(findIn(item) ?? '').endsWith('llm-pi-ai'))
+    if (entry !== undefined) {
+      const config = entry.get?.('config') as Node | undefined
+      if (config === undefined || typeof config.get !== 'function') return undefined
+      let providers = config.get('providers') as Node | undefined
+      if (providers === undefined || typeof providers.set !== 'function') {
+        providers = doc.createNode?.({}) as Node
+        config.set?.('providers', providers)
+      }
+      const existing = providers.get?.(input.vendorId) as Node | undefined
+      const current = existing !== undefined && typeof existing.get === 'function' ? existing : undefined
+      const models = input.models.length > 0
+        ? input.models
+        : (current?.get?.('models') as unknown[] | undefined) ?? []
+      const next: Record<string, unknown> = {
+        displayName: input.vendorName,
+        api: current?.get?.('api') ?? 'openai-completions',
+        baseURL: input.baseUrl,
+        models,
+        // llm-pi-ai 缺省的 128000 比很多上游的真实上限还大（直连 Agnes 就是 400）。
+        defaultMaxTokens: (current?.get?.('defaultMaxTokens') as number | undefined) ?? HARNESS_DEFAULT_MAX_TOKENS,
+      }
+      if (input.apiKey !== '') {
+        // 写明文密钥，但保留 apiKeyEnv：DSH 只认 apiKeyEnv 指向的凭据，
+        // 删掉它这家上游就彻底没有密钥了（`apiKey` 是给我们自己回读的）。
+        next.apiKey = input.apiKey
+        const keptEnv = current?.get?.('apiKeyEnv')
+        if (typeof keptEnv === 'string' && keptEnv !== '') next.apiKeyEnv = keptEnv
+      } else {
+        // 留空 = 保留原来的密钥；原来用的是环境变量就继续用环境变量。
+        const keptKey = current?.get?.('apiKey')
+        const keptEnv = current?.get?.('apiKeyEnv')
+        if (typeof keptKey === 'string' && keptKey !== '') next.apiKey = keptKey
+        else if (typeof keptEnv === 'string' && keptEnv !== '') next.apiKeyEnv = keptEnv
+      }
+      providers.set?.(input.vendorId, doc.createNode?.(next) as never)
+      return doc.toString?.()
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * YAML 编解码器的惰性加载：宿主自带 yaml，取不到时给出可读失败。
+ *
+ * 反向同步要写回 profile，所以这里比只读路径多要一个 stringify/dump。
+ */
+async function loadYamlCodec(): Promise<{ parse: (text: string) => unknown, stringify: (value: unknown) => string }> {
   const candidates = ['yaml', 'js-yaml']
   for (const specifier of candidates) {
     try {
-      const module = await import(specifier) as { parse?: (text: string) => unknown, default?: { parse?: (text: string) => unknown } }
+      const module = await import(specifier) as {
+        parse?: (text: string) => unknown
+        stringify?: (value: unknown) => string
+        dump?: (value: unknown) => string
+        default?: { parse?: (text: string) => unknown, stringify?: (value: unknown) => string, dump?: (value: unknown) => string }
+      }
       const parse = module.parse ?? module.default?.parse
-      if (typeof parse === 'function') return (text: string) => parse(text)
+      const stringify = module.stringify ?? module.dump ?? module.default?.stringify ?? module.default?.dump
+      if (typeof parse === 'function' && typeof stringify === 'function') {
+        return { parse: (text: string) => parse(text), stringify: (value: unknown) => stringify(value) }
+      }
     } catch {
       // 下一个候选。
     }
   }
-  // 都取不到：配置无法解码，但插件仍挂载并如实报告「YAML 解码器不可用」。
-  return () => { throw new Error('no YAML decoder available (expected the host to provide "yaml" or "js-yaml")') }
+  throw new Error('no YAML codec available (expected the host to provide "yaml" or "js-yaml")')
+}
+
+/** 只读路径用的解码器；拿不到编解码器时返回一个会抛错的桩。 */
+async function loadYamlDecoder(): Promise<(text: string) => unknown> {
+  try {
+    return (await loadYamlCodec()).parse
+  } catch {
+    return () => { throw new Error('no YAML decoder available (expected the host to provide "yaml" or "js-yaml")') }
+  }
 }
 
 /**
@@ -181,14 +276,21 @@ export async function apply(ctx: {
       : loader.current()
   }
 
-  /** 面板整表保存厂家配置；apiKey 为空串表示保留已存明文。 */
+  /**
+   * 面板保存厂家配置；apiKey 为空串表示保留已存明文。
+   *
+   * **只合并、不整表替换**：面板手里的列表可能是一份旧快照，整表写回会把
+   * 它没见过的厂家（比如刚被别处加进来的）悄悄删掉。删除是另一个显式动作
+   * （deleteVendor），不该由「保存」顺带完成。
+   */
   async function saveVendors(mode: RoutingMode, input: unknown): Promise<{ ok: boolean, error?: string }> {
     const incoming = coerceVendorsList(input)
-    const merged: VendorConfig[] = incoming.map((vendor) => {
-      if (vendor.apiKey !== '') return vendor
-      const existing = vendorDoc.vendors.find((entry) => entry.vendorId === vendor.vendorId)
-      return { ...vendor, apiKey: existing?.apiKey ?? '' }
-    })
+    const byId = new Map(vendorDoc.vendors.map((vendor) => [vendor.vendorId, vendor] as const))
+    for (const vendor of incoming) {
+      const existing = byId.get(vendor.vendorId)
+      byId.set(vendor.vendorId, { ...vendor, apiKey: vendor.apiKey !== '' ? vendor.apiKey : (existing?.apiKey ?? '') })
+    }
+    const merged = [...byId.values()]
     vendorDoc = { version: vendorDoc.version, mode, vendors: merged }
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
@@ -197,6 +299,136 @@ export async function apply(ctx: {
     await refreshSecrets()
     log.info('vendors saved (%d configured, %d routable)', merged.length, merged.filter(vendorIsRoutable).length)
     return { ok: true }
+  }
+
+  /** 删掉一家厂家（显式动作，和保存分开：保存永远不删东西）。 */
+  async function deleteVendor(vendorId: string): Promise<{ ok: boolean, error?: string }> {
+    const next = vendorDoc.vendors.filter((vendor) => vendor.vendorId !== vendorId)
+    if (next.length === vendorDoc.vendors.length) return { ok: false, error: '没有这家厂家' }
+    vendorDoc = { ...vendorDoc, vendors: next }
+    await vendorStore.save(vendorDoc)
+    usingVendors = vendorDoc.vendors.length > 0
+    configValue = currentPool()
+    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+    await refreshSecrets()
+    log.info('vendor %s removed', vendorId)
+    return { ok: true }
+  }
+
+  /**
+   * 把 DSH profile 里已经配好的上游抓过来。
+   *
+   * 用户早在 profile 里填过 Base URL / 密钥 / 模型清单，面板不该再问一遍。
+   * 只读 `llm-pi-ai` 的 providers，跳过我们自己的 steward 网关。
+   *
+   * `scope` 来自面板：用户停在哪家就只拉哪家。不传才是整份导入——profile 里
+   * 上游一多，一次全搬会把几十上百个模型一起塞进白嫖池，没人想要那个。
+   */
+  async function importFromHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }> {
+    const files = await harnessPatchFiles()
+    if (files.length === 0) {
+      return { ok: false, imported: [], error: '没有找到 DSH 的 profile 配置（cordis.patch.yml）' }
+    }
+    const collected = new Map<string, HarnessProvider>()
+    for (const file of files) {
+      try {
+        const text = await readFile(file, 'utf8')
+        for (const provider of harnessProviders(decode(text))) collected.set(provider.vendorId, provider)
+      } catch (error) {
+        log.warn('import: %s: %s', file, error instanceof Error ? error.message : String(error))
+      }
+    }
+    if (collected.size === 0) {
+      return { ok: false, imported: [], error: 'profile 里没有可导入的模型配置' }
+    }
+    const picked = selectHarnessProviders([...collected.values()], scope)
+    if (picked.length === 0) {
+      return {
+        ok: false,
+        imported: [],
+        error: scope?.baseUrl !== undefined && scope.baseUrl !== ''
+          ? '系统模型设置里没有地址是 ' + scope.baseUrl + ' 的上游'
+          : '系统模型设置里没有这家上游',
+      }
+    }
+    const incoming = picked.map((provider) => harnessVendor(provider, process.env))
+    const merged = mergeImportedVendors(vendorDoc.vendors, incoming)
+    vendorDoc = { version: vendorDoc.version, mode: vendorDoc.mode, vendors: merged }
+    await vendorStore.save(vendorDoc)
+    usingVendors = vendorDoc.vendors.length > 0
+    configValue = currentPool()
+    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode())
+    await refreshSecrets()
+    log.info('imported %d providers from DSH profiles', incoming.length)
+    return { ok: true, imported: incoming.map((vendor) => vendor.vendorId) }
+  }
+
+  /**
+   * 反向同步：把管家里的这家厂家写回 DSH 的系统模型设置。
+   *
+   * 用户在管家里勾好的型号，只有写回 profile 才会出现在 DSH 的模型菜单里。
+   * 只动 llm-pi-ai.providers 下同 id 的那一条，其余内容原样保留。
+   */
+  async function syncToHarness(vendorId: string): Promise<{ ok: boolean, file?: string, models?: number, error?: string }> {
+    const vendor = vendorDoc.vendors.find((entry) => entry.vendorId === vendorId)
+    if (vendor === undefined) return { ok: false, error: '这家厂家还没保存，先保存一次再同步' }
+    if (vendor.enabledModels.length === 0) return { ok: false, error: '这家厂家还没勾选任何模型' }
+    const files = await harnessPatchFiles()
+    if (files.length === 0) return { ok: false, error: '没有找到 DSH 的 profile 配置（cordis.patch.yml）' }
+    const file = files[0] as string
+    let codec: Awaited<ReturnType<typeof loadYamlCodec>>
+    try {
+      codec = await loadYamlCodec()
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    }
+    try {
+      const text = await readFile(file, 'utf8')
+      const literalKey = credentialKind(vendor.apiKey) === 'unknown' || credentialKind(vendor.apiKey) === 'literal'
+        ? vendor.apiKey.replace(/^literal:/, '')
+        : ''
+      const input = syncInputFromVendor(vendor, vendorEndpoint(vendor))
+      // 写回时按地址认领已有的 provider 键：同 id 不在、但地址一样的，就地更新，
+      // 别在同一份 profile 里留两份同一家上游。
+      const targetId = resolveSyncVendorId(codec.parse(text), input.vendorId, input.baseUrl)
+      const payload = { ...input, vendorId: targetId, apiKey: literalKey }
+      // 优先用能保住注释的写法：profile 是用户手写的，重排+丢注释等于毁了他的配置。
+      const written = await writeProviderPreservingComments(text, payload)
+      if (written !== undefined) await writeFileAtomic(file, written)
+      else {
+        const doc = codec.parse(text)
+        upsertHarnessProvider(doc, payload)
+        await writeFileAtomic(file, codec.stringify(doc))
+      }
+      log.info('vendor %s synced to %s (%d models)', vendorId, file, input.models.length)
+      return { ok: true, file, models: input.models.length }
+    } catch (error) {
+      return { ok: false, error: messageOf(error) }
+    }
+  }
+
+  /** profile 里的 cordis.patch.yml（desktop 优先，其余 profile 一并扫）。 */
+  async function harnessPatchFiles(): Promise<string[]> {
+    const profiles = join(dshHome(), 'profiles')
+    const candidates = [join(profiles, 'desktop', 'cordis.patch.yml')]
+    try {
+      for (const name of await readdir(profiles)) {
+        const file = join(profiles, name, 'cordis.patch.yml')
+        if (!candidates.includes(file)) candidates.push(file)
+      }
+    } catch {
+      // profile 目录不存在就算了，下面统一做存在性检查。
+    }
+    const existing: string[] = []
+    for (const file of candidates) {
+      try {
+        await access(file)
+        existing.push(file)
+      } catch {
+        // 跳过不存在的 profile。
+      }
+    }
+    return existing
   }
 
   /** 配置变了就重建路由引擎；失败时保留旧引擎。 */
@@ -283,7 +515,22 @@ export async function apply(ctx: {
         log: (level, message) => { log[level]('%s', message) },
         port: settings.gatewayPort,
         statePath,
+        // SQLite 响应缓存落在插件数据目录：重启后仍可命中，命中即 0 token。
+        cacheDirectory: directory,
+        // composer 里选了「管家·极致便宜」这类模型 → 默认模式跟着改并落盘。
+        onMode: (mode) => {
+          if (vendorDoc.mode === mode) return
+          vendorDoc = { ...vendorDoc, mode }
+          void vendorStore.save(vendorDoc).catch((error: unknown) => {
+            log.warn('cannot persist mode: %s', error instanceof Error ? error.message : String(error))
+          })
+        },
       })
+      // DSH 的 steward provider 用 `apiKeyEnv: STEWARD_LOCAL_TOKEN` 取本地令牌。
+      // 令牌是网关自己生成的，只有我们手里有——必须由我们写进进程环境。
+      // 指望用户手工 export 是不可靠的：换个启动方式（比如从另一个 shell 拉起）
+      // 变量就不在了，DSH 会认为这家没有密钥，直接把「管家」从模型菜单里藏掉。
+      process.env[STEWARD_TOKEN_ENV] = gateway.token()
       const state: GatewayState = {
         appliedAt: Date.now(),
         pid: process.pid,
@@ -307,6 +554,8 @@ export async function apply(ctx: {
   // ── 面板路由 ────────────────────────────────────────────
   const disposers: Array<() => void> = []
   if (ctx.webServer !== undefined) {
+    // 内置头像随包发布（assets/avatars），由同源路由提供，浏览器无需跨域。
+    const avatarDirectory = fileURLToPath(new URL('../assets/avatars', import.meta.url))
     const routes = makePanelRoutes({
       snapshot: async () => {
         const now = Date.now()
@@ -317,13 +566,19 @@ export async function apply(ctx: {
         const poolState = usingVendors
           ? { status: 'ok' as const, source: 'vendors.json' }
           : loader.state()
-        return router === undefined
-          ? emptySnapshot(now, poolState)
-          : router.snapshot(now, {
-            usage: usageCache.facts as never,
-            usageAvailable: usageCache.available,
-            pool: poolState,
-          })
+        const cache = gateway === undefined ? undefined : await gateway.cacheStats(now)
+        if (router === undefined) return emptySnapshot(now, poolState)
+        return router.snapshot(now, {
+          usage: usageCache.facts as never,
+          usageAvailable: usageCache.available,
+          pool: poolState,
+          ...(cache === undefined
+            ? {}
+            : {
+              cacheBackend: cache.backend,
+              cacheSavings: { tokens: cache.savedTokens, cost: cache.savedCost, cacheHits: cache.cacheHitsToday },
+            }),
+        })
       },
       setMode: (mode: RoutingMode) => {
         if (router === undefined) return false
@@ -343,7 +598,21 @@ export async function apply(ctx: {
       },
       discover: async (vendorId: string, baseUrl: string, apiKey: string) => {
         // 面板同源代理：宿主进程发起上游探测（浏览器跨源会被 CORS 拦截）。
-        return discoverUpstreamModels(vendorId, baseUrl, apiKey)
+        // 没传地址/密钥就回落到这家厂商已保存的那一份，用户不必重复抄写。
+        const saved = vendorDoc.vendors.find((vendor) => vendor.vendorId === vendorId)
+        const template = templateVendors().find((entry) => entry.vendorId === vendorId)
+        // 还没保存过的目录厂商（OpenCode Zen）直接用目录里的官方地址。
+        const endpoint = baseUrl.trim() !== ''
+          ? baseUrl.trim()
+          : (saved === undefined ? (template?.officialUrl ?? '') : vendorEndpoint(saved))
+        const key = apiKey.trim() !== '' ? apiKey.trim() : (saved?.apiKey ?? '')
+        // 模型清单公开的厂商（OpenCode Zen）不需要密钥就能列模型；
+        // 真正调用模型时仍然要它自己的 key。
+        const publicModels = template?.publicModels === true
+        if (endpoint === '' || (key === '' && !publicModels)) {
+          throw new Error('endpoint and api key are required')
+        }
+        return discoverUpstreamModels(vendorId, endpoint, key)
       },
       getVendors: () => ({
         mode: vendorDoc.mode,
@@ -352,13 +621,19 @@ export async function apply(ctx: {
           vendorName: vendor.vendorName,
           officialUrl: vendor.officialUrl,
           customUrl: vendor.customUrl,
+          ...(vendor.endpointSource === undefined ? {} : { endpointSource: vendor.endpointSource }),
           hasKey: vendor.apiKey !== '',
           apiKeyMasked: maskKey(vendor.apiKey),
           enabledModels: [...vendor.enabledModels],
+          ...(vendor.pulledModels === undefined ? {} : { pulledModels: vendor.pulledModels.map((model) => ({ ...model })) }),
           modelTags: { ...(vendor.modelTags ?? {}) },
+          modelPricing: { ...(vendor.modelPricing ?? {}) },
         })),
       }),
       saveVendors: (mode, input) => saveVendors(mode, input),
+      importHarness: (scope?: ImportScope) => importFromHarness(scope),
+      syncHarness: (vendorId: string) => syncToHarness(vendorId),
+      deleteVendor: (vendorId: string) => deleteVendor(vendorId),
       reload: () => reload(Date.now()),
       gateway: () => gateway === undefined
         ? undefined
@@ -368,7 +643,7 @@ export async function apply(ctx: {
           modelIds: gatewayModelIds(configValue),
           port: gateway.port(),
         },
-    })
+    }, { avatarDirectory })
     for (const route of routes) {
       try {
         disposers.push(ctx.webServer.register(route))
@@ -434,7 +709,7 @@ export async function apply(ctx: {
           '2. 接厂商：action=add_or_update_vendor，给 vendor_id / base_url / api_key（推荐 env:NAME 引用）/ enabled_models；',
           '3. 勾模型：action=set_enabled_models；',
           '4. 打标签：action=tag_model，标签用简单能力词（编程 / 文案 / 视频 / 做题 / 推理 / 多模态 / 快速 / 前端 …）；',
-          '5. 切模式：action=set_mode（frugal=极致便宜，balanced=效率优先，max_power=最强火力）。',
+          '5. 切模式：action=set_mode（frugal=满足硬过滤的 C/D 级里最便宜；balanced=任务维度须达 A/A+ 再看成本；max_power=六维总和最高）。',
           '',
           '所有改动立即热生效，无需重启。密钥永不出现在你的回复里。',
         ].join('\n'),
@@ -488,7 +763,7 @@ export async function apply(ctx: {
 
 /** 网关公布的模型 id（与 host/gateway 的规则同源）。 */
 function gatewayModelIds(config: PoolConfig | undefined): string[] {
-  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power']
+  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free']
   if (config === undefined) return ids
   for (const provider of config.providers) {
     for (const model of provider.models) {
@@ -510,6 +785,7 @@ function emptySnapshot(now: number, pool: { status: string, source: string, erro
     agents: [],
     recent: [],
     totals: { todayTokens: 0, todayCost: null, cacheHitRate: null, degradedRequests: 0, unpricedModels: 0 },
+    savings: { tokens: 0, cost: null, cacheHits: 0, cacheBackend: 'off' },
     pool,
   }
 }

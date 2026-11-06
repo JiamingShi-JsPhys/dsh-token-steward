@@ -18,7 +18,7 @@ import {
   readUsageProjection,
   totalOf,
 } from '../src/host/usage-bridge.ts'
-import { API_PREFIX, isLoopbackRequest, makePanelRoutes, writeJson, type PanelApi } from '../src/host/routes.ts'
+import { API_PREFIX, isLoopbackRequest, makePanelRoutes, writeJson, type PanelApi, type PanelRouteOptions } from '../src/host/routes.ts'
 import { localDateKey } from '../src/core/ledger-doc.ts'
 
 /* ────────────────────────── 计量桥 ────────────────────────── */
@@ -128,8 +128,8 @@ test('readUsageProjection：损坏的 JSON 不可用但给出原因', async () =
 /* ────────────────────────── 面板路由 ────────────────────────── */
 
 /** 用一个真 HTTP 服务承载路由，这样测的是真实请求路径而不是函数调用。 */
-async function withRoutes<T>(api: PanelApi, run: (base: string) => Promise<T>): Promise<T> {
-  const routes = makePanelRoutes(api)
+async function withRoutes<T>(api: PanelApi, run: (base: string) => Promise<T>, options: PanelRouteOptions = {}): Promise<T> {
+  const routes = makePanelRoutes(api, options)
   const server: Server = createServer((req, res) => {
     const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
     const route = routes.find((entry) => entry.path === path)
@@ -172,7 +172,7 @@ test('snapshot 返回 200 与快照', async () => {
   })
 })
 
-test('mode 只接受三个合法值', async () => {
+test('mode 四个合法值都认，白嫖（free）不是例外', async () => {
   await withRoutes(api(), async (base) => {
     const ok = await fetch(base + API_PREFIX + '/mode', {
       method: 'POST',
@@ -180,6 +180,12 @@ test('mode 只接受三个合法值', async () => {
       body: JSON.stringify({ mode: 'max_power' }),
     })
     assert.equal(ok.status, 200)
+    const free = await fetch(base + API_PREFIX + '/mode', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'free' }),
+    })
+    assert.equal(free.status, 200)
     const bad = await fetch(base + API_PREFIX + '/mode', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -249,4 +255,104 @@ test('isLoopbackRequest 认得出本机地址', () => {
   assert.equal(isLoopbackRequest({ socket: { remoteAddress: '::ffff:127.0.0.1' } } as never), true)
   assert.equal(isLoopbackRequest({ socket: { remoteAddress: '192.168.1.9' } } as never), false)
   assert.equal(isLoopbackRequest({ socket: {} } as never), false)
+})
+
+
+test('avatar 端点同源提供内置头像，并拒绝路径穿越', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'steward-avatars-'))
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+  await writeFile(join(directory, 'claude-opus-5-5.png'), png)
+  try {
+    await withRoutes(api(), async (base) => {
+      const ok = await fetch(base + API_PREFIX + '/avatar?id=claude-opus-5-5')
+      assert.equal(ok.status, 200)
+      assert.equal(ok.headers.get('content-type'), 'image/png')
+      assert.deepEqual(new Uint8Array(await ok.arrayBuffer()), png)
+
+      const traversal = await fetch(base + API_PREFIX + '/avatar?id=' + encodeURIComponent('../secret'))
+      assert.equal(traversal.status, 404)
+
+      const missing = await fetch(base + API_PREFIX + '/avatar?id=none')
+      assert.equal(missing.status, 404)
+    }, { avatarDirectory: directory })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('discover 路由把请求交给 api.discover，而不是自己拿空 key 去打上游', async () => {
+  // 只有 api.discover 知道「这家已保存的线路和密钥」。路由绕过它直接探测上游时，
+  // 面板留空就会被当成无鉴权请求，用户看到的是一句莫名其妙的 401。
+  const seen: Array<{ vendorId: string, baseUrl: string, apiKey: string }> = []
+  await withRoutes(api({
+    discover: async (vendorId, baseUrl, apiKey) => {
+      seen.push({ vendorId, baseUrl, apiKey })
+      return [{ id: 'm1', object: 'model', name: 'M1', tier: 'NA', inCatalog: false, owned_by: 'upstream' }]
+    },
+  }), async (base) => {
+    const response = await fetch(base + API_PREFIX + '/discover', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ vendorId: 'relay' }),
+    })
+    assert.equal(response.status, 200)
+    const body = await response.json() as { ok: boolean, data: Array<{ id: string }> }
+    assert.equal(body.ok, true)
+    assert.equal(body.data[0]?.id, 'm1')
+    // 留空照原样往下传：回落逻辑在 api.discover 里，路由不该自作主张。
+    assert.deepEqual(seen, [{ vendorId: 'relay', baseUrl: '', apiKey: '' }])
+  })
+})
+
+
+/* ────────────────────── 「只导入这一家」的两条约束 ────────────────────── */
+
+test('import-harness 把面板给的范围原样转给宿主', async () => {
+  const seen: Array<{ vendorId?: string, baseUrl?: string } | undefined> = []
+  await withRoutes(api({
+    importHarness: async (scope) => {
+      seen.push(scope)
+      return { ok: true, imported: ['westlake'] }
+    },
+  }), async (base) => {
+    const response = await fetch(base + API_PREFIX + '/import-harness', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ vendorId: 'custom', baseUrl: 'https://hpc-api.westlake.edu.cn/v1' }),
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(seen, [{ vendorId: 'custom', baseUrl: 'https://hpc-api.westlake.edu.cn/v1' }])
+  })
+})
+
+test('import-harness 不带 body 时不传范围（保留整份导入这条脚本通道）', async () => {
+  const seen: Array<unknown> = []
+  await withRoutes(api({
+    importHarness: async (scope) => {
+      seen.push(scope)
+      return { ok: true, imported: [] }
+    },
+  }), async (base) => {
+    const response = await fetch(base + API_PREFIX + '/import-harness', { method: 'POST' })
+    assert.equal(response.status, 200)
+    assert.deepEqual(seen, [undefined])
+  })
+})
+
+test('保存厂家配置时 white-list 里漏掉 free，会把白嫖悄悄改回 frugal', async () => {
+  const seen: Array<{ mode: string }> = []
+  await withRoutes(api({
+    saveVendors: async (mode) => {
+      seen.push({ mode })
+      return { ok: true }
+    },
+  }), async (base) => {
+    const response = await fetch(base + API_PREFIX + '/vendors', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'free', vendors: [] }),
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(seen, [{ mode: 'free' }])
+  })
 })

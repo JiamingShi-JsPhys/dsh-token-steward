@@ -14,9 +14,9 @@
     "lib",
     "src",
     "cordis.patch.yml",
+    "assets",
     "model_pool.example.yaml",
     "README.md",
-    "README.zh.md",
     "docs",
     "LICENSE",
     "CHANGELOG.md",
@@ -71,9 +71,9 @@
   "author": "dsh-token-steward contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://example.com/your-org/DSH-Steward-Budget.git"
+    "url": "git+https://github.com/JiamingShi-JsPhys/dsh-token-steward.git"
   },
   "bugs": {
-    "url": "https://example.com/your-org/DSH-Steward-Budget/issues"
+    "url": "https://github.com/JiamingShi-JsPhys/dsh-token-steward/issues"
   }
 }

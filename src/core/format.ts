@@ -76,17 +76,19 @@ export const MODE_LABEL: Record<RoutingMode, string> = {
   frugal: '极致便宜',
   balanced: '效率优先',
   max_power: '最强火力',
+  free: '白嫖模式',
 }
 
 /** 三个模式的一句解释，用作按钮 title。 */
 export const MODE_HINT: Record<RoutingMode, string> = {
-  frugal: '优先 free / low 档位；只在能力不够时升级',
-  balanced: '优先 fast 标签与实测延迟；并发自动打散到不同模型',
-  max_power: '优先能力标签最全、质量分最高的模型',
+  frugal: '满足硬过滤的 C/D 级里选最便宜；没有低阶才放宽',
+  balanced: '任务对应维度须达 A/A+，再按质量与成本 0.6/0.4 混合，并发自动打散',
+  max_power: '六维总和最高者优先，Tier 破平',
+  free: '只走零成本的模型（免费池 + 免费型号），一个都没有就报错，绝不偷偷花钱',
 }
 
 /** 三个模式的排列顺序（UI 从左到右）。 */
-export const MODE_ORDER: RoutingMode[] = ['frugal', 'balanced', 'max_power']
+export const MODE_ORDER: RoutingMode[] = ['frugal', 'balanced', 'max_power', 'free']
 
 /** 健康状态的中文标签。 */
 export const HEALTH_LABEL: Record<string, string> = {

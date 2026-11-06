@@ -1,18 +1,19 @@
 /**
- * 三个调度模式的打分器（六维评分版）。
+ * 三个调度模式的打分器（终极整合版）。
  *
- * 打分只回答「在已经通过硬过滤的候选里，谁更该先上」；它不做能力过滤、
- * 不看网络、不读时钟（now 由 context 带入）。新增一种模式 = 新增一个 Scorer，
- * 过滤与降级逻辑一律不动。
+ * 规格来自产品定义，三条互不相同的选路哲学：
  *
- * 六维主键：每个请求带一个主维度（intent.dimension，由 intent.ts 推断），
- * 三个模式都以该维的评分为主序——例如 coding 任务在 max_power 下优先选
- * scores.coding.score 最高的模型。目录未收录的模型（无六维数据）回退到
- * legacy 的 quality_rank / cost_level，行为与旧配置完全兼容。
+ *  - **Max Power**：无脑选六维**总和**最高（SSS/SS 排在最前）。
+ *    不猜「这个任务需要哪一维」，就是整体最强。
+ *  - **Balanced**：先过「任务对应维度 ≥ A/A+」的门槛，门槛内看
+ *    质量 × 成本（0.6 / 0.4）；没有达标者时自然退化为「最能打的 + 成本破平」。
+ *  - **Frugal**：在满足硬过滤的 **C/D 级**模型里选最便宜的；没有 C/D 才放宽。
  *
- * 每个打分器都同时产出 reasons，面板直接展示，而不是事后编解释。
+ * 打分只回答「已经通过硬过滤的候选里，谁先上」；不碰网络、不读时钟、
+ * 不改变过滤与降级逻辑。每个打分器同时产出 `reasons`，面板直接展示。
  */
 import type { DimensionScore, ModelEntry, ModelHealth, RouteIntent, RoutingMode, ScoreContext, ScoreResult, Scorer } from './types.ts'
+import { outputPer1k } from './pricing.ts'
 
 /** legacy 成本档位 → 每千 token 成本分（0..100，越高越便宜）。 */
 export const COST_LEVEL_SCORE: Record<ModelEntry['cost_level'], number> = {
@@ -22,30 +23,35 @@ export const COST_LEVEL_SCORE: Record<ModelEntry['cost_level'], number> = {
   high: 20,
 }
 
-/** 六维字母评级 → 序（max_power 的破平用；评级是独立事实，不做阈值推导）。 */
+/** Tier / 字母评级 → 序。评级是独立事实字段，不做阈值推导。 */
 export const TIER_RANK: Record<string, number> = {
   SSS: 100, SS: 90, S: 80, 'A+': 72, A: 65, 'B+': 55, B: 50, 'C+': 40, C: 35, D: 20, NA: 0,
 }
 
-/** frugal 模式的「够用线」：主维度低于这个分的模型沉底，但不出局（仍是降级链候选）。 */
-export const FRUGAL_FLOOR = 30
+/** 评级序（六维的 grade 与 Tier 共用同一张表）。 */
+export const GRADE_RANK = TIER_RANK
 
-/** balanced 模式的混合权重：质量 0.65 + 成本 0.35。 */
-export const BALANCED_QUALITY_WEIGHT = 0.65
-export const BALANCED_COST_WEIGHT = 0.35
+/** Balanced 的准入门槛：任务主维度必须达到 A。 */
+export const BALANCED_MIN_GRADE_RANK = TIER_RANK.A ?? 65
 
-/** balanced 模式：每个在飞请求的扣分（把并发摊开）。 */
-const INFLIGHT_PENALTY = 20
+/** Balanced 的质量 / 成本权重。 */
+export const BALANCED_QUALITY_WEIGHT = 0.6
+export const BALANCED_COST_WEIGHT = 0.4
 
-/**
- * balanced 模式：同一 burst 批次内已派次数的扣分——idea_swarm 打散仍然成立。
- * 大于 blend 的满分区（100×100）：同 burst 内已派过的模型必须让位给任何
- * 还没派过的合格候选，「先用没派过的」是这个模式的定义，不是倾向。
- */
+/** Frugal 的「C/D 级」上界：序 ≤ C+（含未评级 NA）才算低阶模型。 */
+export const FRUGAL_TIER_CEILING = TIER_RANK['C+'] ?? 40
+
+/** balanced：每个在飞请求的扣分（把并发摊开）。 */
+const INFLIGHT_PENALTY = 200
+
+/** balanced：同 burst 已派次数的扣分（决定性打散）。 */
 const BURST_PENALTY = 20_000
 
-/** frugal 模式：在飞扣分远小于成本差。 */
+/** frugal：在飞扣分远小于价格差。 */
 const FRUGAL_INFLIGHT_PENALTY = 5
+
+/** max_power：同分时窗口最多加这么多（2M 与 10M 不产生差距）。 */
+const WINDOW_BONUS_CAP = 20
 
 /** 主维度分数 + 来源（六维 or legacy）。 */
 export interface DimensionReading {
@@ -61,15 +67,43 @@ export function dimensionReading(model: ModelEntry, intent: RouteIntent): Dimens
   return { score: model.quality_rank, grade: 'legacy', source: 'legacy' }
 }
 
+/** 六维总和；没有六维数据时用 quality_rank × 6 近似（保持量纲一致）。 */
+export function totalDimensionScore(model: ModelEntry): number {
+  if (model.dimensions === undefined) return model.quality_rank * 6
+  const values = Object.values(model.dimensions) as DimensionScore[]
+  return values.reduce((sum, entry) => sum + entry.score, 0)
+}
+
+/** Tier 序；未评级为 0。 */
+export function tierRankOf(tier: string | undefined): number {
+  return TIER_RANK[tier ?? 'NA'] ?? 0
+}
+
+/** 评级序；未知评级为 0。 */
+export function gradeRankOf(grade: string | undefined): number {
+  return GRADE_RANK[grade ?? 'NA'] ?? 0
+}
+
+/** 该模型是否达到 Balanced 的 A 级门槛。 */
+export function meetsBalancedGate(model: ModelEntry, intent: RouteIntent): boolean {
+  const reading = dimensionReading(model, intent)
+  if (reading.source === 'legacy') return reading.score >= BALANCED_MIN_GRADE_RANK
+  return gradeRankOf(reading.grade) >= BALANCED_MIN_GRADE_RANK
+}
+
+/** 该模型是否属于 Frugal 偏好的 C/D 级（含未评级）。 */
+export function isLowTier(model: ModelEntry): boolean {
+  return tierRankOf(model.tier) <= FRUGAL_TIER_CEILING
+}
+
 /**
- * 每千 token 成本分（0..100，越高越便宜）。
- * 优先 costPer1kOutput（目录/厂商覆盖）；回退 legacy pricing（每百万）与 cost_level。
- * null = 未定价 → 50（中性：frugal 不特殊偏爱，balanced 不特殊惩罚）。
+ * 每千 token 输出价与成本分（0..100，越高越便宜）。
+ * 优先生效价目（目录估算/用户覆盖），回退 legacy cost_level。
+ * null = 未定价 → 中性 50：frugal 不特殊偏爱，balanced 不特殊惩罚。
  */
 export function costScoreOf(model: ModelEntry): { per1k: number | null, score: number } {
-  const per1k = model.costPer1kOutput
-    ?? (model.pricing !== undefined ? model.pricing.output_per_mtok / 1000 : null)
-  if (per1k === null || per1k === undefined || !Number.isFinite(per1k)) {
+  const per1k = outputPer1k(model)
+  if (per1k === null || !Number.isFinite(per1k)) {
     return { per1k: null, score: COST_LEVEL_SCORE[model.cost_level] }
   }
   // $0.001/1k ≈ 99 分，$0.08/1k ≈ 4 分：对常见价差足够敏感。
@@ -81,66 +115,95 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
 
+/** 价格的可读理由。 */
+function priceReason(per1k: number | null, model: ModelEntry): string {
+  return per1k === null ? 'PRICE:' + model.cost_level.toUpperCase() : 'PRICE:$' + per1k.toFixed(4) + '/1K'
+}
+
 /**
- * 极致便宜：成本是绝对主序，主维度分数只在同成本内破平；
- * 低于「够用线」的模型沉到所有合格候选之后（仍是降级链的一部分）。
+ * 极致便宜：C/D 级里最便宜，价格是绝对主序。
+ * 低阶模型优先（-1e6 的罚分对 A/S 级生效），没有低阶候选时罚分对所有人一样，
+ * 自然退化为「全体最便宜」——这就是「没有 C/D 才放宽」的实现。
  */
 export const frugalScorer: Scorer = (model, intent, health, _context): ScoreResult => {
   const reading = dimensionReading(model, intent)
   const cost = costScoreOf(model)
+  const lowTier = isLowTier(model)
   const spread = health.inFlight * FRUGAL_INFLIGHT_PENALTY
-  const floorPenalty = reading.score < FRUGAL_FLOOR ? 1_000_000 : 0
   return {
-    // cost.score 越高越便宜 → 直接作为主序；主维度分数只在同成本内破平。
-    score: round2(cost.score * 1000 + reading.score * 10 - spread - floorPenalty),
+    // 低阶优先的罚分必须大于价格分的整个量程（100×10000），否则「便宜的 A/S」会翻盘。
+    score: round2(cost.score * 10_000 + reading.score * 100 - spread - (lowTier ? 0 : 10_000_000)),
     reasons: [
-      cost.per1k === null ? 'cost:' + model.cost_level : 'cost:$' + cost.per1k.toFixed(4) + '/1k',
-      'dim ' + intent.dimension + ':' + String(reading.score) + '(' + reading.grade + ')',
-      'inflight:' + String(health.inFlight) + '/' + String(model.max_concurrency),
-      ...(reading.score < FRUGAL_FLOOR ? ['below-floor:' + String(FRUGAL_FLOOR)] : []),
+      priceReason(cost.per1k, model),
+      'TIER:' + (model.tier ?? 'NA'),
+      'DIM:' + intent.dimension + ' ' + reading.grade,
+      'INFLIGHT:' + String(health.inFlight) + '/' + String(model.max_concurrency),
+      ...(lowTier ? [] : ['FALLBACK:tier-widened']),
     ],
   }
 }
 
 /**
- * 效率优先（balanced）：质量与成本的加权混合为主序；
- * burst 内已派次数与在飞请求数把并发摊开——四个子代理同时开工时
- * 自然落到四个不同模型，而不是一起撞 429。
+ * 效率优先：任务主维度 ≥ A 才有资格；门槛内质量 0.6 + 成本 0.4。
+ * burst 内已派次数与在飞请求把并发摊开——四个子代理同时开工时自然落到
+ * 四个不同模型，而不是一起撞 429。
  */
 export const balancedScorer: Scorer = (model, intent, health, context): ScoreResult => {
   const reading = dimensionReading(model, intent)
   const cost = costScoreOf(model)
+  const gated = meetsBalancedGate(model, intent)
   const blend = BALANCED_QUALITY_WEIGHT * reading.score + BALANCED_COST_WEIGHT * cost.score
   const spread = health.inFlight * INFLIGHT_PENALTY
   const burst = context.burstLoad * BURST_PENALTY
   return {
-    score: round2(blend * 100 - spread - burst),
+    score: round2(blend * 100 + (gated ? 1_000_000 : 0) - spread - burst),
     reasons: [
-      'dim ' + intent.dimension + ':' + String(reading.score) + '(' + reading.grade + ')',
-      cost.per1k === null ? 'cost:' + model.cost_level : 'cost:$' + cost.per1k.toFixed(4) + '/1k',
-      'burst:' + String(context.burstLoad),
-      'inflight:' + String(health.inFlight) + '/' + String(model.max_concurrency),
+      'DIM:' + intent.dimension + ' ' + reading.grade,
+      priceReason(cost.per1k, model),
+      'GATE:' + (gated ? 'A' : 'BELOW'),
+      'BURST:' + String(context.burstLoad),
+      'INFLIGHT:' + String(health.inFlight) + '/' + String(model.max_concurrency),
     ],
   }
 }
 
 /**
- * 最强火力：请求主维度的六维分数是绝对主序，Tier 评级破平，
- * 上下文窗口再次之；延迟只作同分微调，绝不让「快但弱」翻盘。
+ * 最强火力：六维总和是绝对主序，Tier 破平，窗口再次之，
+ * 延迟只作同分微调——绝不让「快但弱」翻盘。
  */
-export const maxPowerScorer: Scorer = (model, intent, health, _context): ScoreResult => {
-  const reading = dimensionReading(model, intent)
-  const tierRank = TIER_RANK[model.tier ?? ''] ?? 0
-  const window = Math.min(model.context_window / 100_000, 20)
-  const latency = health.ewmaLatencyMs === undefined ? 0 : -(health.ewmaLatencyMs / 1000)
+export const maxPowerScorer: Scorer = (model, _intent, health, _context): ScoreResult => {
+  const total = totalDimensionScore(model)
+  const tierRank = tierRankOf(model.tier)
+  const window = Math.min(model.context_window / 100_000, WINDOW_BONUS_CAP) * 10
+  const latency = health.ewmaLatencyMs === undefined ? 0 : -(health.ewmaLatencyMs / 1_000)
   return {
-    score: round2(reading.score * 10 + tierRank + window + latency),
+    score: round2(total * 100 + tierRank * 10 + window + latency),
     reasons: [
-      'dim ' + intent.dimension + ':' + String(reading.score) + '(' + reading.grade + ')',
-      'tier:' + (model.tier ?? 'NA'),
-      'window:' + String(model.context_window),
+      'SUM:' + total.toFixed(1),
+      'TIER:' + (model.tier ?? 'NA'),
+      'WINDOW:' + String(model.context_window),
     ],
   }
+}
+
+/**
+ * 零成本判定：有效价目（用户覆盖 / 目录估算）为 0 才算。
+ * 未定价（null）不算免费——「不知道多少钱」和「不要钱」是两回事，
+ * 白嫖模式不能把未定价的模型当成免费放进去。
+ */
+export function isFreeModel(model: ModelEntry): boolean {
+  const { per1k } = costScoreOf(model)
+  if (per1k !== null) return per1k === 0
+  return model.cost_level === 'free'
+}
+
+/**
+ * 白嫖：候选在路由层已经被硬过滤成零成本，价格不再是变量，
+ * 所以在剩下的免费模型里按质量挑（六维总和 + Tier + 窗口）。
+ */
+export const freeScorer: Scorer = (model, intent, health, context): ScoreResult => {
+  const result = maxPowerScorer(model, intent, health, context)
+  return { score: result.score, reasons: [...result.reasons, 'FREE:0'] }
 }
 
 /** 模式 → 打分器。 */
@@ -148,6 +211,7 @@ export const SCORERS: Record<RoutingMode, Scorer> = {
   frugal: frugalScorer,
   balanced: balancedScorer,
   max_power: maxPowerScorer,
+  free: freeScorer,
 }
 
 /** 按模式取打分器；未知模式回退 frugal（配置层已经保证合法，这里只是防御）。 */

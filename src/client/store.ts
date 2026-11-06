@@ -7,7 +7,7 @@
  *  - 不可见时停轮询：面板关掉、页面切到后台，都不再发请求；
  *  - 错误是一等状态：失败不清空上一份快照，只挂一条错误行。
  */
-import type { MatrixSnapshot, RoutingMode } from '../core/types.ts'
+import type { ImportScope, MatrixSnapshot, RoutingMode } from '../core/types.ts'
 import type { CatalogVendor, DiscoveredModel, PanelClient, VendorView } from './api.ts'
 
 /** 面板打开时的轮询间隔。 */
@@ -48,6 +48,13 @@ export interface PanelStore {
   saveVendors(mode: RoutingMode, vendors: unknown): Promise<void>
   /** 探测上游模型列表；失败抛错给调用方展示。 */
   discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<DiscoveredModel[]>
+  /** 从 DSH 现有 profile 抓取已配好的上游；成功后刷新厂家列表。
+   *  带 scope 时只抓地址对上的那一家（面板上「我待在哪家就拉哪家」）。 */
+  importHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }>
+  /** 反向同步：把这家厂家写回 DSH 的系统模型设置。 */
+  syncHarness(vendorId: string): Promise<{ ok: boolean, file?: string, models?: number, error?: string }>
+  /** 显式删除一家厂家，成功后刷新列表。 */
+  deleteVendor(vendorId: string): Promise<{ ok: boolean, error?: string }>
   /** 展开 / 收起面板；展开时会立刻刷新一次。 */
   setOpen(open: boolean): void
   /** 页面可见性变化。 */
@@ -168,6 +175,23 @@ export function createPanelStore(client: PanelClient): PanelStore {
     }
   }
 
+  async function importHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }> {
+    const result = await client.importHarness(scope)
+    if (result.ok) await refreshVendors()
+    return result
+  }
+
+  async function deleteVendor(vendorId: string): Promise<{ ok: boolean, error?: string }> {
+    const result = await client.deleteVendor(vendorId)
+    if (result.ok) await refreshVendors()
+    return result
+  }
+
+  async function syncHarness(vendorId: string): Promise<{ ok: boolean, file?: string, models?: number, error?: string }> {
+    const result = await client.syncHarness(vendorId)
+    return result
+  }
+
   async function discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<DiscoveredModel[]> {
     const body = await client.discoverModels(params)
     return body.data
@@ -184,6 +208,9 @@ export function createPanelStore(client: PanelClient): PanelStore {
     reload,
     refreshVendors,
     discoverModels,
+    importHarness,
+    syncHarness,
+    deleteVendor,
     async saveVendors(mode, vendors) {
       try {
         await client.saveVendors(mode, vendors)

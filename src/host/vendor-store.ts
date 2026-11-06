@@ -69,7 +69,7 @@ function parseDocument(text: string): VendorsDocument | undefined {
   const record = raw as Record<string, unknown>
   if (record.version !== VENDORS_VERSION) return undefined
   if (!Array.isArray(record.vendors)) return undefined
-  const mode: RoutingMode = record.mode === 'balanced' || record.mode === 'max_power' ? record.mode : 'frugal'
+  const mode: RoutingMode = record.mode === 'balanced' || record.mode === 'max_power' || record.mode === 'free' ? record.mode : 'frugal'
   const vendors: VendorConfig[] = []
   for (const entry of record.vendors) {
     const vendor = coerceVendor(entry)
@@ -87,14 +87,67 @@ function coerceVendor(entry: unknown): VendorConfig | undefined {
   const enabled = Array.isArray(record.enabledModels)
     ? record.enabledModels.filter((id): id is string => typeof id === 'string' && id !== '')
     : []
+  const modelTags = coerceModelTags(record.modelTags)
+  const modelPricing = coerceModelPricing(record.modelPricing)
+  const pulledModels = coercePulledModels(record.pulledModels)
   return {
     vendorId,
     vendorName: stringOr(record.vendorName, vendorId),
     officialUrl: stringOr(record.officialUrl, ''),
     customUrl: stringOr(record.customUrl, ''),
+    ...(record.endpointSource === 'official' || record.endpointSource === 'relay'
+      ? { endpointSource: record.endpointSource }
+      : {}),
     apiKey: stringOr(record.apiKey, ''),
     enabledModels: enabled,
+    // 这两项以前被丢掉：保存后重启即丢失，AI 打的标签与用户覆盖的价目都白做。
+    ...(modelTags === undefined ? {} : { modelTags }),
+    ...(modelPricing === undefined ? {} : { modelPricing }),
+    ...(pulledModels === undefined ? {} : { pulledModels }),
   }
+}
+
+/** 拉取快照：`{ id, name }[]`；id 空的丢，name 缺省用 id。 */
+function coercePulledModels(value: unknown): Array<{ id: string, name: string }> | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: Array<{ id: string, name: string }> = []
+  for (const entry of value) {
+    if (entry === null || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    if (id === '') continue
+    const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : id
+    out.push({ id, name })
+  }
+  return out.length > 0 ? out : undefined
+}
+
+/** 模型标签：`{ modelId: string[] }`；非法值逐条丢弃。 */
+function coerceModelTags(value: unknown): Record<string, string[]> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, string[]> = {}
+  for (const [modelId, tags] of Object.entries(value as Record<string, unknown>)) {
+    if (modelId === '' || !Array.isArray(tags)) continue
+    const list = tags.filter((tag): tag is string => typeof tag === 'string' && tag !== '')
+    if (list.length > 0) out[modelId] = list
+  }
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
+/** 模型价目覆盖：`{ modelId: { input, output } }`（每百万 token，非负有限数）。 */
+function coerceModelPricing(value: unknown): Record<string, { input: number, output: number }> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, { input: number, output: number }> = {}
+  for (const [modelId, price] of Object.entries(value as Record<string, unknown>)) {
+    if (modelId === '' || price === null || typeof price !== 'object' || Array.isArray(price)) continue
+    const record = price as Record<string, unknown>
+    const input = record.input
+    const output = record.output
+    if (typeof input !== 'number' || typeof output !== 'number') continue
+    if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) continue
+    out[modelId] = { input, output }
+  }
+  return Object.keys(out).length === 0 ? undefined : out
 }
 
 /** rename 的重导出仅供测试使用（损坏隔离的行为在 atomic-file 里）。 */

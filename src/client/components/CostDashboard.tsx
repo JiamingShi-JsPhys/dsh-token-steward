@@ -20,22 +20,22 @@ export interface CostDashboardProps {
 export function CostDashboard(props: CostDashboardProps): ReactNode {
   const face = headline(props.snapshot)
   return (
-    <div className={css.headline} data-dsh-part="headline">
-      <Metric label={props.t('headline.tokens')} value={face.tokens} />
+    <div className={css.headline} data-dsh-part="headline" data-cache-backend={face.backend}>
+      <Metric label={props.t('headline.saved')} value={face.saved} note={face.savedNote} tone="saved" />
       <Metric label={props.t('headline.cost')} value={face.cost} note={face.costNote} />
-      <Metric label={props.t('headline.cache')} value={face.cache} />
+      <Metric label={props.t('headline.cache')} value={face.cache} note={props.t('headline.backend') + ': ' + face.backend.toUpperCase()} />
       <Metric label={props.t('headline.degraded')} value={face.degraded} />
     </div>
   )
 }
 
 /** 一张数字卡。 */
-function Metric(props: { label: string, value: string, note?: string | undefined }): ReactNode {
+function Metric(props: { label: string, value: string, note?: string | undefined, tone?: string | undefined }): ReactNode {
   return (
-    <div className={css.metric}>
+    <div className={css.metric} data-tone={props.tone}>
       <div className={css.metricLabel}>{props.label}</div>
       <div className={css.metricValue}>{props.value}</div>
-      {props.note === undefined ? null : <div className={css.metricNote}>{props.note}</div>}
+      {props.note === undefined || props.note === '' ? null : <div className={css.metricNote}>{props.note}</div>}
     </div>
   )
 }

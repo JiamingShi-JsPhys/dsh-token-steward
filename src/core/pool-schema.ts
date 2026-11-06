@@ -46,7 +46,7 @@ export const COST_LEVELS: readonly CostLevel[] = ['high', 'medium', 'low', 'free
 
 export const AVAILABILITIES: readonly Availability[] = ['direct', 'proxy', 'offline']
 
-export const ROUTING_MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power']
+export const ROUTING_MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power', 'free']
 
 export const API_SHAPES: readonly ApiShape[] = ['openai-completions']
 
@@ -61,7 +61,7 @@ export const DEFAULT_DEFAULTS: RoutingDefaults = {
 
 /** 本地精确响应缓存的缺省策略：关闭。 */
 export const DEFAULT_CACHE: CachePolicy = {
-  exact_match: false,
+  exact_match: true,
   max_entries: 500,
   ttl_ms: 3_600_000,
 }

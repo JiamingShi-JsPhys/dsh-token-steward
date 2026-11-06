@@ -39,7 +39,7 @@ interface UpstreamCall {
 /** 起一个网关，测试结束自动关。 */
 async function withGateway<T>(
   run: (gateway: Gateway, calls: UpstreamCall[]) => Promise<T>,
-  options: { responses?: Array<() => Promise<Response>>, ledger?: boolean } = {},
+  options: { responses?: Array<() => Promise<Response>>, ledger?: boolean, onMode?: (mode: string) => void } = {},
 ): Promise<T> {
   const calls: UpstreamCall[] = []
   let index = 0
@@ -62,6 +62,7 @@ async function withGateway<T>(
     secrets: () => new Map([['cheap', 'sk-cheap'], ['strong', 'sk-strong']]),
     fetchImpl,
     now: () => 1_000,
+    ...(options.onMode === undefined ? {} : { onMode: options.onMode }),
     ...(ledger === undefined ? {} : { ledger }),
   })
   try {
@@ -179,6 +180,18 @@ test('steward:max_power 把模式切到最强火力并选中质量分最高的�
     assert.equal(calls[0]?.body.model, 'strong-1')
     assert.equal(sharedRouter.getMode(), 'max_power')
   })
+})
+
+test('composer 里选的模型会同步默认模式：中文模型名同样触发 onMode', async () => {
+  sharedRouter = createRouter(config())
+  const seen: string[] = []
+  await withGateway(async (gateway) => {
+    // 中文写法（管家·最强火力）与 steward:max_power 是同一条路由。
+    const response = await post(gateway, { model: '管家·最强火力', messages: [{ role: 'user', content: 'hi' }] })
+    assert.equal(response.status, 200)
+    assert.deepEqual(seen, ['max_power'])
+    assert.equal(sharedRouter.getMode(), 'max_power')
+  }, { onMode: (mode) => { seen.push(mode) } })
 })
 
 test('steward:pin/<provider>/<model> 直通到指定模型', async () => {

@@ -36,6 +36,12 @@ export interface Headline {
   cost: string
   /** 花费下方的补充说明，如「3 个模型未定价」。 */
   costNote?: string
+  /** 今日已省：优先金额，未定价时退回省下的 token。 */
+  saved: string
+  /** 已省数字下方的来源说明。 */
+  savedNote: string
+  /** 缓存后端（sqlite / memory / off）。 */
+  backend: string
   /** 缓存命中率。 */
   cache: string
   /** 降级请求数。 */
@@ -51,11 +57,29 @@ export function headline(snapshot: MatrixSnapshot): Headline {
   const costNote = !available
     ? '计量不可用'
     : unpriced > 0 ? String(unpriced) + ' 个模型未定价' : undefined
+  const savings = snapshot.savings
+  const savedCost = savings?.cost ?? null
+  const saved = savings === undefined
+    ? UNPRICED
+    : savedCost !== null
+      ? formatCost(savedCost)
+      : savings.tokens > 0 ? formatTokens(savings.tokens) : '0'
   return {
     tokens: available ? formatTokens(snapshot.totals.todayTokens) : UNPRICED,
     cost: available ? formatCost(snapshot.totals.todayCost) : UNPRICED,
     ...(costNote === undefined ? {} : { costNote }),
-    cache: available ? formatPercent(snapshot.totals.cacheHitRate) : UNPRICED,
+    saved,
+    savedNote: savings === undefined
+      ? ''
+      : savedCost !== null
+        ? String(savings.cacheHits) + ' 次缓存命中 + 降配选路'
+        : '省下 ' + formatTokens(savings.tokens) + ' token（未定价）',
+    backend: savings?.cacheBackend ?? 'off',
+    // 上游 usage 台账不给缓存信息时，退回本地缓存的真实命中次数——
+    // 「—」会让人以为缓存没工作，而它其实刚刚省下了一次出站。
+    cache: snapshot.totals.cacheHitRate !== null
+      ? formatPercent(snapshot.totals.cacheHitRate)
+      : (savings?.cacheHits ?? 0) > 0 ? String((savings as { cacheHits: number }).cacheHits) + ' 次' : UNPRICED,
     degraded: String(snapshot.totals.degradedRequests),
     usageAvailable: available,
   }
@@ -240,15 +264,88 @@ export function bannerOf(snapshot: MatrixSnapshot): Banner | undefined {
   return undefined
 }
 
-/** 悬浮球上那一个数字：优先显示今日花费，未定价时退回 token 数。 */
+/**
+ * 悬浮球上那一个数字：**今日已省**。
+ * 有金额显示金额，只有 token 时显示 token；一无所有时是诚实的 0。
+ */
 export function ballBadge(snapshot: MatrixSnapshot): string {
-  if (!snapshot.usageAvailable) return UNPRICED
-  const cost = snapshot.totals.todayCost
-  if (cost !== null) return formatCost(cost)
-  return formatTokens(snapshot.totals.todayTokens)
+  const savings = snapshot.savings
+  if (savings === undefined) return UNPRICED
+  if (savings.cost !== null) return formatCost(savings.cost)
+  if (savings.tokens > 0) return formatTokens(savings.tokens)
+  return '0'
+}
+
+/* ────────────────────────────── 极客标签 ────────────────────────────── */
+
+/** 六维在卡片上的短名（大写、不带空格）。 */
+const DIMENSION_TAG: Record<string, string> = {
+  reasoning: 'REASONING',
+  longContext: 'LONG-CONTEXT',
+  coding: 'CODING',
+  agentic: 'AGENTIC',
+  proWork: 'PRO-WORK',
+  factuality: 'FACTUALITY',
+}
+
+/** 六维固定展示顺序（与评分表列顺序一致）。 */
+const DIMENSION_ORDER = ['reasoning', 'longContext', 'coding', 'agentic', 'proWork', 'factuality'] as const
+
+/** 窗口的人类写法：128000 → 128K，1000000 → 1M。 */
+export function windowTag(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return '?'
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000
+    return (Number.isInteger(millions) ? String(millions) : millions.toFixed(1)) + 'M'
+  }
+  return String(Math.round(tokens / 1_000)) + 'K'
+}
+
+/**
+ * 评级是否是真事实。
+ *
+ * 目录里没被评过级的模型记作 `NA`（中性 50 分）。把它印成
+ * `[REASONING: NA]` 会让一整排标签变成噪声，所以这里统一视作「未知」。
+ */
+function isKnownGrade(grade: string | undefined): boolean {
+  if (grade === undefined) return false
+  const trimmed = grade.trim()
+  return trimmed !== '' && trimmed.toUpperCase() !== 'NA'
+}
+
+/**
+ * 模型卡的极客标签：全部大写纯文字 + 方括号，由 CSS 加 1px 实线边框与等宽字体。
+ * 规格示例：`[REASONING: SSS]`、`[VISION]`、`[200K]`。**绝不使用 Emoji。**
+ */
+export function geekTags(card: ModelCardView): string[] {
+  const tags: string[] = []
+  const tierKnown = isKnownGrade(card.tier)
+  if (tierKnown) tags.push('[TIER: ' + card.tier + ']')
+  let dimensionKnown = false
+  if (card.dimensions !== undefined) {
+    for (const key of DIMENSION_ORDER) {
+      const reading = card.dimensions[key]
+      // 未评级的维度不冒充事实：NA 不上标签，改用一枚 [UNRATED] 说明「这家还没评过」。
+      if (!isKnownGrade(reading.grade)) continue
+      dimensionKnown = true
+      tags.push('[' + (DIMENSION_TAG[key] ?? key.toUpperCase()) + ': ' + reading.grade + ']')
+    }
+  }
+  if (!tierKnown && !dimensionKnown) tags.push('[UNRATED]')
+  for (const capability of card.capabilities) {
+    tags.push('[' + capability.toUpperCase().replace(/_/g, '-') + ']')
+  }
+  if (card.imageInput === true) tags.push('[VISION]')
+  if (card.imageOutput === true) tags.push('[IMAGE-OUT]')
+  if (card.videoOutput === true) tags.push('[VIDEO-OUT]')
+  // 向量 / 重排模型留在矩阵里可见，但永远不会被派对话：用标签说清楚。
+  if (card.chat === false) tags.push('[NO-CHAT]')
+  tags.push('[' + windowTag(card.contextWindow) + ']')
+  if (card.todayCost === null) tags.push('[UNPRICED]')
+  return [...new Set(tags)]
 }
 
 /** 悬浮球的颜色主题：按当前模式区分。 */
-export function ballTone(snapshot: MatrixSnapshot): 'frugal' | 'balanced' | 'max_power' {
+export function ballTone(snapshot: MatrixSnapshot): RoutingMode {
   return snapshot.mode
 }

@@ -15,12 +15,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode, VendorConfig } from '../core/types.ts'
+import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode, TokenUsage, VendorConfig } from '../core/types.ts'
 import type { StewardRouter } from '../core/router.ts'
 import { inferIntent } from '../core/intent.ts'
-import { cacheKeyOf, LruTtlCache, type CachedResponse } from '../core/response-cache.ts'
+import { cacheKeyOf } from '../core/response-cache.ts'
+import { createMemoryCache, createResponseCache, type CachedResponse, type CacheStatsView, type ResponseCache } from './sqlite-cache.ts'
+import { costOfUsage, priceOf } from '../core/pricing.ts'
 import { discoverUpstreamModels } from './discovery.ts'
-import { dispatch, usageFromBody, type FetchLike } from './upstream.ts'
+import { dispatch, findRoute, usageFromBody, type FetchLike } from './upstream.ts'
 import type { RouteLedgerStore } from './ledger-store.ts'
 import { modelKey } from '../core/router.ts'
 
@@ -52,10 +54,20 @@ export interface GatewayOptions {
   fetchImpl?: FetchLike
   /** 注入时钟（测试用）。 */
   now?(): number
+  /**
+   * 请求里的虚拟 id 指定了固定模式（管家·极致便宜 等）时通知宿主：
+   * 宿主据此把「默认调度模式」同步过去并落盘，面板与 composer 才不会各说各话。
+   */
+  onMode?(mode: RoutingMode): void
   /** 绑定端口；0 表示由系统分配（默认）。 */
   port?: number
   /** gateway.json 的路径；提供时复用已持久化的令牌（跨重启稳定接线）。 */
   statePath?: string
+  /**
+   * SQLite 缓存目录；缺省时缓存只存在内存里（测试与老宿主）。
+   * 提供时落 `cache.sqlite`，重启仍可命中。
+   */
+  cacheDirectory?: string
 }
 
 /** 从既有 gateway.json 里读回令牌（文件缺失或损坏返回 undefined）。 */
@@ -82,6 +94,8 @@ export interface Gateway {
   token(): string
   /** 当前模式（可被面板改）。 */
   setMode(mode: RoutingMode): RoutingMode
+  /** 缓存统计（含今日节省）；缓存关闭时 backend = off。 */
+  cacheStats(at?: number): Promise<CacheStatsView>
   /** 关闭监听（幂等）。 */
   close(): Promise<void>
 }
@@ -91,6 +105,27 @@ const TOKEN_BYTES = 32
 
 /** 请求体上限：8 MiB，超过直接拒绝，避免内存被一个坏请求吃光。 */
 const MAX_BODY_BYTES = 8 * 1024 * 1024
+
+/**
+ * 出站 max_tokens 的硬上限。
+ *
+ * 客户端（含 DSH 自己）会按「模型很大」发一个远超上游能力的 max_tokens，
+ * 中转站直接 400（实测 Agnes：`max_tokens 不能超过 65536`）。各家当前的
+ * 输出上限都 ≤ 65536，所以这里统一压到 65536：既不会再被拒，也不会
+ * 把正常请求截短。
+ */
+export const MAX_OUTPUT_CEILING = 65_536
+
+/** 把出站请求的 max_tokens / max_completion_tokens 压到上限之内（原地修改）。 */
+export function clampOutputBudget(body: Record<string, unknown>): Record<string, unknown> {
+  for (const field of ['max_tokens', 'max_completion_tokens'] as const) {
+    const value = body[field]
+    if (typeof value === 'number' && Number.isFinite(value) && value > MAX_OUTPUT_CEILING) {
+      body[field] = MAX_OUTPUT_CEILING
+    }
+  }
+  return body
+}
 
 /** 生成一个本地令牌。 */
 export function generateToken(): string {
@@ -161,22 +196,42 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
   const log = options.log ?? (() => {})
   const fetchImpl: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init as RequestInit))
   const now = options.now ?? (() => Date.now())
+
+  /** 一次真实出站的用量：台账记一笔，路由引擎据基准模型折算节省。 */
+  function recordUsage(provider: string, model: string, usage: TokenUsage): void {
+    options.ledger?.recordUsage(provider, model, usage)
+    options.router().noteUsage(provider, model, usage, now())
+  }
   // 令牌持久化：复用 gateway.json 里已有的令牌（llm-pi-ai 的 apiKeyEnv 是静态
   // 环境变量，令牌换了接线就断）。只在文件缺失或令牌非法时生成新的。
   const persisted = await readPersistedToken(options.statePath)
   const token = persisted ?? generateToken()
 
-  // ── 本地精确响应缓存（routing.cache.exact_match，默认关闭）────────
+  // ── 本地精确响应缓存（routing.cache.exact_match，默认开启）────────
   // 命中即回放上次响应字节：不出站、不计费、不进健康状态机。
-  let cache: LruTtlCache<CachedResponse> | undefined
+  let activeCache: ResponseCache | undefined
   let cachePolicyKey = ''
-  function cacheFor(policy: CachePolicy): LruTtlCache<CachedResponse> {
+  let pendingCache: Promise<ResponseCache> | undefined
+  async function cacheFor(policy: CachePolicy): Promise<ResponseCache> {
     const key = String(policy.max_entries) + ':' + String(policy.ttl_ms)
-    if (cache === undefined || cachePolicyKey !== key) {
-      cache = new LruTtlCache<CachedResponse>({ maxEntries: policy.max_entries, ttlMs: policy.ttl_ms })
-      cachePolicyKey = key
+    if (activeCache !== undefined && cachePolicyKey === key) return activeCache
+    if (pendingCache !== undefined && cachePolicyKey === key) return await pendingCache
+    cachePolicyKey = key
+    const previous = activeCache
+    const factory = options.cacheDirectory === undefined
+      ? Promise.resolve(createMemoryCache(policy))
+      : createResponseCache({ directory: options.cacheDirectory, policy })
+    pendingCache = factory
+    const created = await factory
+    if (cachePolicyKey !== key) {
+      // 并发热重载：这份策略已过期，关掉它，按新策略重来。
+      await created.close().catch(() => {})
+      return await cacheFor(policy)
     }
-    return cache
+    activeCache = created
+    pendingCache = undefined
+    if (previous !== undefined) void previous.close().catch(() => {})
+    return created
   }
 
   const server: Server = createServer((req, res) => {
@@ -265,6 +320,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       writeError(res, 400, 'bad-request', 'request body is not valid JSON')
       return
     }
+    clampOutputBudget(body)
 
     const modelId = typeof body.model === 'string' ? body.model : ''
     if (modelId === '') {
@@ -278,16 +334,23 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const requestId = 'stg-' + randomBytes(8).toString('hex')
 
     // 虚拟 id 的显式意图优先于全局模式：steward:max_power 就是「这次必须最强」。
-    if (route.mode !== undefined) router.setMode(route.mode)
+    // 顺手把全局模式同步过去，用户在 composer 里选的模型就是设置页里的那一档。
+    if (route.mode !== undefined) {
+      router.setMode(route.mode)
+      options.onMode?.(route.mode)
+    }
 
     // ── 精确缓存：键含生效模式与流式形状，换模式/换形状天然失效 ──
     const cacheEnabled = config.routing.cache.exact_match
     const cacheKey = cacheEnabled ? cacheKeyOf(body, modelId, router.getMode()) : undefined
     if (cacheKey !== undefined) {
-      const hit = cacheFor(config.routing.cache).get(cacheKey, clock)
+      const hit = await (await cacheFor(config.routing.cache)).get(cacheKey, clock)
       if (hit !== undefined && stillServes(config, hit.provider, hit.model)) {
         await replayResponse(res, hit)
-        router.noteCacheHit(requestId, hit.provider, hit.model, clock)
+        router.noteCacheHit(requestId, hit.provider, hit.model, clock, {
+          tokens: hit.inputTokens + hit.outputTokens,
+          cost: hit.savedCost,
+        })
         router.noteAgent(agentIdOf(body), hit.provider, hit.model, clock)
         return
       }
@@ -295,7 +358,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     if (route.pin !== undefined) {
       const pinned: RouteIntent = { ...intent, aliasName: 'pin:' + route.pin.provider + '/' + route.pin.model }
       const planned = router.plan(pinned, clock, requestId, [modelKey(route.pin.provider, route.pin.model)])
-      await runPlanned(res, config, router, planned, body, requestId, cacheKey)
+      await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey)
       return
     }
     if (route.virtual.startsWith('steward:alias/')) {
@@ -308,7 +371,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       if (alias.mode !== undefined) router.setMode(alias.mode)
       if (alias.pin !== undefined) {
         const planned = router.plan(intent, clock, requestId, [modelKey(alias.pin.provider, alias.pin.model)])
-        await runPlanned(res, config, router, planned, body, requestId, cacheKey)
+        await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey)
         return
       }
       const widened: RouteIntent = {
@@ -316,7 +379,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
         requiredCapabilities: unique([...intent.requiredCapabilities, ...(alias.require ?? [])]),
         requiredModalities: unique([...intent.requiredModalities, ...(alias.require_modalities ?? [])]),
       }
-      await runPlanned(res, config, router, router.plan(widened, clock, requestId), body, requestId, cacheKey)
+      await runPlanned(res, config, router, router.plan(widened, clock, requestId), body, requestId, intent, cacheKey)
       return
     }
 
@@ -324,11 +387,11 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const direct = findDirectRoute(config, modelId)
     if (direct !== undefined) {
       const planned = router.plan(intent, clock, requestId, [direct])
-      await runPlanned(res, config, router, planned, body, requestId, cacheKey)
+      await runPlanned(res, config, router, planned, body, requestId, intent, cacheKey)
       return
     }
 
-    await runPlanned(res, config, router, router.plan(intent, clock, requestId), body, requestId, cacheKey)
+    await runPlanned(res, config, router, router.plan(intent, clock, requestId), body, requestId, intent, cacheKey)
   }
 
   /**
@@ -365,11 +428,12 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     planned: ReturnType<StewardRouter['plan']>,
     body: Record<string, unknown>,
     requestId: string,
+    intent: RouteIntent,
     cacheKey?: string,
   ): Promise<void> {
     if (!planned.ok) {
       const status = planned.refusal.code === 'all-models-cooling' ? 503 : 400
-      writeError(res, status, planned.refusal.code, summarizeRefusal(planned.refusal.rejected))
+      writeError(res, status, planned.refusal.code, refusalMessage(router.getMode(), planned.refusal.rejected))
       return
     }
 
@@ -386,9 +450,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       planned.decision,
       (result) => {
         router.report(result, now())
-        if (result.usage !== undefined && options.ledger !== undefined) {
-          options.ledger.recordUsage(result.provider, result.model, result.usage)
-        }
+        if (result.usage !== undefined) recordUsage(result.provider, result.model, result.usage)
       },
     )
 
@@ -405,8 +467,19 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     if (cacheKey !== undefined && config.routing.cache.exact_match) {
       // 干净完成后把响应字节存入缓存；计费仍按真实上游记账（这一次是真的出站了）。
       await relay(outcome.response, res, body.stream === true, servingProvider, servingModel,
-        (contentType, chunks) => {
-          cacheFor(config.routing.cache).put(cacheKey, { chunks, contentType, provider: servingProvider, model: servingModel }, now())
+        async (contentType, chunks, usage) => {
+          const found = findRoute(config, servingProvider, servingModel)
+          const tokens = usage ?? { input: intent.estimatedInputTokens, output: intent.expectedOutputTokens }
+          const cache = await cacheFor(config.routing.cache)
+          await cache.put(cacheKey, {
+            body: concatChunks(chunks),
+            contentType,
+            provider: servingProvider,
+            model: servingModel,
+            inputTokens: tokens.input,
+            outputTokens: tokens.output,
+            savedCost: costOfUsage(found === undefined ? null : priceOf(found.model), { input: tokens.input, output: tokens.output }),
+          }, now())
         })
       return
     }
@@ -424,23 +497,21 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     stream: boolean,
     provider: string,
     model: string,
-    onRecord?: (contentType: string, chunks: Uint8Array[]) => void,
+    onRecord?: (contentType: string, chunks: Uint8Array[], usage?: TokenUsage) => void | Promise<void>,
   ): Promise<void> {
     const contentType = response.headers.get('content-type') ?? 'application/json'
     if (!stream || response.body === null) {
       const text = await response.text()
-      let usage = undefined
+      let usage: TokenUsage | undefined
       try {
         usage = usageFromBody(JSON.parse(text))
       } catch {
         usage = undefined
       }
-      if (usage !== undefined && options.ledger !== undefined) {
-        options.ledger.recordUsage(provider, model, usage)
-      }
+      if (usage !== undefined) recordUsage(provider, model, usage)
       res.writeHead(200, { 'content-type': contentType, 'cache-control': 'no-store' })
       res.end(text)
-      onRecord?.(contentType, [Buffer.from(text, 'utf8')])
+      await onRecord?.(contentType, [Buffer.from(text, 'utf8')], usage)
       return
     }
 
@@ -454,6 +525,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let usage: TokenUsage | undefined
     const recorded: Uint8Array[] = onRecord === undefined ? [] : []
     try {
       for (;;) {
@@ -464,10 +536,11 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
         if (onRecord !== undefined) recorded.push(value.slice())
         // 只在缓冲增长时扫一次 usage，扫描成本与帧数无关。
         if (buffer.includes('"usage"')) {
-          const usage = lastUsageFromSse(buffer)
+          const parsed = lastUsageFromSse(buffer)
           buffer = ''
-          if (usage !== undefined && options.ledger !== undefined) {
-            options.ledger.recordUsage(provider, model, usage)
+          if (parsed !== undefined) {
+            usage = parsed
+            recordUsage(provider, model, parsed)
           }
         } else if (buffer.length > 256 * 1024) {
           buffer = ''
@@ -480,7 +553,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     } finally {
       res.end()
     }
-    if (onRecord !== undefined && recorded.length > 0) onRecord(contentType, recorded)
+    if (recorded.length > 0) await onRecord?.(contentType, recorded, usage)
   }
 
   const port = await new Promise<number>((resolve, reject) => {
@@ -503,10 +576,25 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     baseUrl: () => 'http://127.0.0.1:' + String(port) + '/v1',
     token: () => token,
     setMode: (mode) => options.router().setMode(mode),
+    async cacheStats(at = now()) {
+      // 缓存开启但还没有第一个请求时，也要如实报告后端（sqlite/memory），
+      // 否则面板会误显示「缓存关闭」。
+      const policy = options.config()?.routing.cache
+      if (policy?.exact_match === true) {
+        const cache = await cacheFor(policy)
+        return await cache.stats(at)
+      }
+      return { backend: 'off' as const, hits: 0, misses: 0, size: 0, evictions: 0, savedTokens: 0, savedCost: null, cacheHitsToday: 0 }
+    },
     async close() {
       if (closed) return
       closed = true
       await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+      if (activeCache !== undefined) {
+        const cache = activeCache
+        activeCache = undefined
+        await cache.close().catch(() => {})
+      }
     },
   }
 }
@@ -533,6 +621,24 @@ function agentIdOf(body: Record<string, unknown>): string {
 }
 
 /** 把拒绝原因压成一行人话。 */
+/**
+ * 拒绝原因 + 一句「下一步该干什么」。
+ *
+ * 白嫖模式最容易被误解：用户勾了一堆模型却全被 `not-free` 挡回来，
+ * 报错里只有「agnes/agnes-3.0-flash: not-free」，看不出是**模式**在挑人。
+ * 这里把该去面板做什么直接写在错误里。
+ */
+export function refusalMessage(
+  mode: string,
+  rejected: Array<{ provider: string; model: string; reason: string }>,
+): string {
+  const base = summarizeRefusal(rejected)
+  if (mode !== 'free') return base
+  const allNotFree = rejected.length > 0 && rejected.every((entry) => entry.reason === 'not-free')
+  if (rejected.length > 0 && !allNotFree) return base
+  return base + '｜白嫖模式只跑零成本模型：去「厂家设置」把要用的型号价目填 0（或勾选名字带 free 的免费型号）再保存'
+}
+
 function summarizeRefusal(rejected: Array<{ provider: string; model: string; reason: string }>): string {
   if (rejected.length === 0) return 'no model satisfies this request'
   const head = rejected.slice(0, 3).map((entry) => entry.provider + '/' + entry.model + ': ' + entry.reason).join('; ')
@@ -578,8 +684,21 @@ async function replayResponse(res: ServerResponse, hit: CachedResponse): Promise
     headers['x-accel-buffering'] = 'no'
   }
   res.writeHead(200, headers)
-  for (const chunk of hit.chunks) res.write(chunk)
+  res.write(hit.body)
   res.end()
+}
+
+/** 把分块读到的响应拼成一个可回放的字节串。 */
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  let total = 0
+  for (const chunk of chunks) total += chunk.byteLength
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return out
 }
 
 /** 从 unknown 里取可读消息。 */

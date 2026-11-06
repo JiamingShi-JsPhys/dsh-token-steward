@@ -58,7 +58,7 @@
   color: var(--dsw-alias-state-success-primary, #1a7f37);
 }
 
-.ball[data-tone='efficiency'] .ring {
+.ball[data-tone='balanced'] .ring {
   color: var(--dsw-alias-brand-primary, #2f6feb);
 }
 
@@ -78,7 +78,7 @@
   z-index: 41;
   display: flex;
   flex-direction: column;
-  width: min(560px, calc(100vw - 48px));
+  width: min(640px, calc(100vw - 48px));
   max-height: min(640px, calc(100vh - 200px));
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
   border-radius: 16px;
@@ -191,8 +191,8 @@
   color: var(--dsw-alias-label-secondary, #555);
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
-  padding: 6px 8px;
+  font-size: 13px;
+  padding: 8px 10px;
 }
 
 .segment[data-active='true'] {
@@ -209,7 +209,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 16px 16px;
+  padding: 8px 18px 18px;
 }
 
 .headline {
@@ -220,26 +220,29 @@
 }
 
 .metric {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-3, rgb(0 0 0 / 4%));
 }
 
 .metricLabel {
-  font-size: 10px;
-  color: var(--dsw-alias-label-tertiary, #888);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary, #555);
 }
 
 .metricValue {
-  margin-top: 2px;
-  font-size: 16px;
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 
 .metricNote {
-  margin-top: 2px;
-  font-size: 10px;
-  color: var(--dsw-alias-label-dimmed, #999);
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #888);
 }
 
 .section {
@@ -247,8 +250,8 @@
 }
 
 .sectionTitle {
-  margin: 0 0 6px;
-  font-size: 11px;
+  margin: 0 0 8px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--dsw-alias-label-tertiary, #888);
   text-transform: uppercase;
@@ -257,12 +260,13 @@
 
 .cardGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
+  /* 160px 会挤成三列，模型名全被截断；240px 在面板宽度下稳定两列。 */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
 }
 
 .card {
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 8%));
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-2, #fff);
@@ -288,7 +292,7 @@
 }
 
 .cardName {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -326,13 +330,28 @@
   /* 冷峻科技感：大写纯文字 + 1px 实线边框 + 透明背景 + 等宽字体（无 Emoji）。 */
   padding: 1px 6px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
-  border-radius: 5px;
+  border-radius: 3px;
   background: transparent;
   color: var(--dsw-alias-label-secondary, #555);
   font-size: 10px;
   font-family: ui-monospace, 'SF Mono', Consolas, monospace;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* 用户自打的擅长标签（多为中文）：保留原文，虚线边框区分「目录事实」与「用户标注」。 */
+.chip[data-kind='strength'] {
+  border-style: dashed;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* 状态标签（中文）：不是能力事实，不加等宽大写的视觉重量。 */
+.chip[data-kind='state'] {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: inherit;
 }
 
 .chip[data-unpriced='true'] {
@@ -508,6 +527,31 @@
   gap: 4px;
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headerActions .iconButton {
+  text-decoration: none;
+}
+
+.settingsModeLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-secondary, #666);
+}
+
+.settingsModeLine strong {
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary, #1a1a1a);
+}
+
 .settingsModeRow {
   display: flex;
   gap: 4px;
@@ -599,12 +643,12 @@
 }
 
 .vendorInput {
-  padding: 6px 10px;
+  padding: 7px 10px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
   border-radius: 8px;
   background: transparent;
   color: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   font-family: ui-monospace, 'SF Mono', Consolas, monospace;
 }
 
@@ -631,12 +675,12 @@
 }
 
 .vendorButton {
-  padding: 5px 14px;
+  padding: 7px 16px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
   border-radius: 8px;
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: pointer;
 }
 
@@ -644,6 +688,18 @@
   background: var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #4d6bfe));
   border-color: transparent;
   color: var(--dsw-alias-label-primary-foreground, #ffffff);
+}
+
+.vendorButton[data-tone='danger'] {
+  margin-left: auto;
+  border-color: color-mix(in srgb, #e5484d 45%, transparent);
+  color: #e5484d;
+}
+
+.vendorButton[data-tone='danger'][data-armed='true'] {
+  background: #e5484d;
+  border-color: transparent;
+  color: #fff;
 }
 
 .vendorButton:disabled { opacity: 0.5; cursor: default; }
@@ -676,7 +732,7 @@
 .modelCheckName { flex: none; }
 
 .modelCheckId {
-  opacity: 0.55;
+  opacity: 0.62;
   font-family: ui-monospace, 'SF Mono', Consolas, monospace;
   font-size: 11px;
   overflow: hidden;
@@ -750,4 +806,419 @@
 .agentEntry:hover {
   border-color: var(--dsw-alias-brand-primary, #4d6bfe);
   color: var(--dsw-alias-brand-primary, #4d6bfe);
+}
+
+/* ────────────────────────── 模型卡：头像 + 极客标签 ────────────────────────── */
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cardHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cardProvider {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 9.5px;
+  color: var(--dsw-alias-label-dimmed, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 40×40 头像：外圈是 Tier 色，内圈是头像/字母，整体六边形（未收录为圆形）。 */
+.avatar {
+  --tier-color: var(--dsw-alias-label-dimmed, #94a3b8);
+  --tier-glow: transparent;
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: var(--tier-color);
+  clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+  filter: drop-shadow(0 0 6px var(--tier-glow));
+}
+
+.avatar[data-shape='circle'] {
+  clip-path: circle(50%);
+  border-radius: 50%;
+}
+
+.avatarImage,
+.avatarLetter {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+}
+
+.avatar[data-shape='circle'] .avatarImage,
+.avatar[data-shape='circle'] .avatarLetter {
+  clip-path: circle(50%);
+  border-radius: 50%;
+}
+
+.avatarImage {
+  object-fit: cover;
+  background: hsl(var(--avatar-hue, 210) 55% 40%);
+}
+
+.avatarLetter {
+  background: hsl(var(--avatar-hue, 210) 55% 40%);
+  color: #fff;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* Tier 决定发光色：SSS 金 → D 暗灰。 */
+.avatar[data-tier='SSS'] { --tier-color: #f5c542; --tier-glow: rgb(245 197 66 / 65%); }
+.avatar[data-tier='SS'] { --tier-color: #b06cf0; --tier-glow: rgb(176 108 240 / 60%); }
+.avatar[data-tier='S'] { --tier-color: #4d8dff; --tier-glow: rgb(77 141 255 / 55%); }
+.avatar[data-tier='A+'] { --tier-color: #38bdf8; --tier-glow: rgb(56 189 248 / 50%); }
+.avatar[data-tier='A'] { --tier-color: #22d3ee; --tier-glow: rgb(34 211 238 / 50%); }
+.avatar[data-tier='B+'] { --tier-color: #34d399; --tier-glow: rgb(52 211 153 / 45%); }
+.avatar[data-tier='B'] { --tier-color: #4ade80; --tier-glow: rgb(74 222 128 / 40%); }
+.avatar[data-tier='C+'] { --tier-color: #94a3b8; --tier-glow: rgb(148 163 184 / 35%); }
+.avatar[data-tier='C'] { --tier-color: #94a3b8; --tier-glow: rgb(148 163 184 / 30%); }
+.avatar[data-tier='D'] { --tier-color: #64748b; --tier-glow: rgb(100 116 139 / 25%); }
+.avatar[data-tier='NA'] { --tier-color: #64748b; --tier-glow: transparent; }
+
+/* 卡片也跟着 Tier 微微镶边（不抢头像的视觉中心）。 */
+.card[data-tier='SSS'] { border-color: rgb(245 197 66 / 55%); }
+.card[data-tier='SS'] { border-color: rgb(176 108 240 / 50%); }
+.card[data-tier='S'] { border-color: rgb(77 141 255 / 45%); }
+
+/* 成本看板：已省是主角，用一条左侧色条强调。 */
+.metric[data-tone='saved'] {
+  border-left: 2px solid var(--dsw-alias-state-success-primary, #1a7f37);
+}
+
+.metric[data-tone='saved'] .metricValue {
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+}
+
+/* ────────────────────────── 设置页：官方 URL / 中转站 / 防封警告 ────────────────────────── */
+
+.vendorOfficial {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary, #555);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.vendorNavItem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* 配置状态点：绿灯 = 有密钥且选了模型，灰点 = 还差东西。 */
+.vendorNavDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary, rgb(128 128 128 / 45%));
+}
+
+.vendorNavItem[data-ready='true'] .vendorNavDot {
+  background: var(--dsw-alias-state-success-primary, #2ea043);
+  box-shadow: 0 0 0 3px color-mix(in srgb, #2ea043 18%, transparent);
+}
+
+.vendorNavLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 已加入的模型数：小号等宽，不抢名字的位置。 */
+.vendorNavCount {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 16%, transparent);
+  color: var(--dsw-alias-brand-primary, #4d6bfe);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.vendorNavItem[data-active='true'] .vendorNavCount {
+  background: rgb(255 255 255 / 26%);
+  color: #fff;
+}
+
+.vendorTotal {
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 14%, transparent);
+  color: var(--dsw-alias-brand-primary, #4d6bfe);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vendorStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #666);
+}
+
+.vendorStatusMain { font-weight: 600; color: inherit; }
+
+.vendorStatusDot {
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary, rgb(128 128 128 / 45%));
+}
+
+.vendorStatusDot[data-on='true'] { background: var(--dsw-alias-state-success-primary, #2ea043); }
+
+.vendorNote {
+  margin: 0 0 2px;
+  padding: 9px 11px;
+  border-left: 3px solid color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+  background: var(--dsw-alias-bg-layer-2, rgb(0 0 0 / 3%));
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--dsw-alias-label-secondary, #666);
+}
+
+.vendorLink {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 35%, transparent);
+  color: var(--dsw-alias-brand-primary, #4d6bfe);
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+.vendorLink:hover {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 12%, transparent);
+}
+
+.vendorHint {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary, #7d7d7d);
+}
+
+/* 红字防封警告：红底、红字、加粗、左侧粗色条，固定在 API Key 正上方。 */
+.banWarning {
+  padding: 10px 12px 10px 14px;
+  border: 1px solid #ff4d4f;
+  border-left: 5px solid #ff4d4f;
+  border-radius: 8px;
+  background: rgb(255 77 79 / 16%);
+  color: #ff4d4f;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+}
+
+/* 模型勾选卡（旧版引用了这些类名但样式表里没有，运行时 className 是 undefined）。 */
+.modelCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.modelSwitchCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, transparent);
+}
+
+.modelSwitchCard[data-on='true'] {
+  border-color: var(--dsw-alias-brand-primary, #4d6bfe);
+}
+
+.modelSwitchHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modelSwitchName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelSwitchOn {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--dsw-alias-state-success-primary, #1a7f37);
+  border-radius: 3px;
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 9.5px;
+  text-transform: uppercase;
+}
+
+.priceRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.priceTitle {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #888);
+}
+
+.priceInput {
+  width: 64px;
+  padding: 2px 5px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+}
+
+.priceUnit {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 9.5px;
+  color: var(--dsw-alias-label-dimmed, #999);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar {
+    filter: none;
+  }
+}
+
+/* 厂家配置区外壳（SettingsPanel 引用；此前缺失导致 className 为 undefined）。 */
+.vendorsSection {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 厂商头像做背景：右侧清楚，左侧渐隐——既看得清人，也不压住表单文字。 */
+.vendorBackdrop {
+  position: absolute;
+  inset: -6%;
+  background-size: cover;
+  background-position: center right;
+  filter: blur(14px) saturate(1.2);
+  opacity: 0.22;
+  pointer-events: none;
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, transparent 38%, rgb(0 0 0 / 85%) 100%);
+  mask-image: linear-gradient(to right, transparent 0%, transparent 38%, rgb(0 0 0 / 85%) 100%);
+}
+
+/* 清楚的那一张：32×32，不进六边形，就是一个圆角小头像。 */
+.vendorFace {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 24%);
+}
+
+.vendorsSection > *:not(.vendorBackdrop) {
+  position: relative;
+  z-index: 1;
+}
+
+/* 线路二选一：一行一条线路，右边一枚单选点。 */
+.endpointRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.28));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, rgb(0 0 0 / 2%));
+  margin-bottom: 8px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.endpointRow:hover {
+  border-color: var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.55));
+}
+
+.endpointRow:has(.endpointDot[data-active='true']) {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 55%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) 9%, transparent);
+}
+
+.endpointRow > .metricLabel {
+  flex: none;
+  font-size: 12px;
+}
+
+.endpointRow .vendorInput {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.endpointDot {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 30%));
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.endpointDot[data-active='true'] {
+  border-color: var(--dsw-alias-brand-primary, #2f6feb);
+  background: radial-gradient(circle, var(--dsw-alias-brand-primary, #2f6feb) 0 45%, transparent 50%);
+}
+
+.endpointDot:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }

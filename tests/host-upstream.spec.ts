@@ -7,12 +7,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { credentialKind, maskSecret, resolveCredential, type CredentialSources } from '../src/host/credentials.ts'
+import { estimateInputTokens } from '../src/core/intent.ts'
+import { refusalMessage } from '../src/host/gateway.ts'
 import {
   attemptOnce,
   buildHeaders,
   dispatch,
   findRoute,
   rewriteBody,
+  clampOutputToWindow,
   upstreamUrl,
   usageFromBody,
   type DispatchContext,
@@ -337,4 +340,32 @@ test('转发：错误体里的消息被带上但被截断', async () => {
   const attempt = await attemptOnce(context(fake.impl, [['alpha', 'sk-a']]), config(), 'alpha', 'a1')
   assert.equal(attempt.ok, false)
   assert.equal(attempt.message?.length, 500)
+})
+
+test('clampOutputToWindow：把 64k 的输出上限压进模型的剩余窗口', () => {
+  // 窗口 128k、输入约 100k → 只剩 28k 左右给输出，64k 必须被压下来。
+  const body = { model: 'x', max_tokens: 65_536, messages: [{ role: 'user', content: 'x'.repeat(400_000) }] }
+  const input = estimateInputTokens(body)
+  clampOutputToWindow(body, 128_000)
+  assert.equal(body.max_tokens, 128_000 - input)
+  assert.ok(body.max_tokens < 65_536)
+})
+
+test('clampOutputToWindow：窗口够大就不动，没写 max_tokens 也不凭空加', () => {
+  const roomy = clampOutputToWindow({ max_completion_tokens: 8_192, messages: [{ role: 'user', content: 'hi' }] }, 1_000_000)
+  assert.equal(roomy.max_completion_tokens, 8_192)
+  const none = clampOutputToWindow({ messages: [{ role: 'user', content: 'hi' }] }, 128_000)
+  assert.equal('max_tokens' in none, false)
+})
+
+test('白嫖模式的拒绝原因要带上「下一步该干什么」', () => {
+  const rejected = [{ provider: 'agnes', model: 'agnes-3.0-flash', reason: 'not-free' }]
+  const free = refusalMessage('free', rejected)
+  assert.ok(free.includes('agnes/agnes-3.0-flash: not-free'))
+  assert.ok(free.includes('白嫖模式只跑零成本模型'))
+  // 别的模式不加这段：它们本来就可以用付费模型。
+  assert.equal(refusalMessage('max_power', rejected), 'agnes/agnes-3.0-flash: not-free')
+  // 不是「全都不免费」时也别乱贴提示。
+  const mixed = refusalMessage('free', [{ provider: 'p', model: 'm', reason: 'missing-capability:vision' }])
+  assert.equal(mixed.includes('白嫖模式'), false)
 })

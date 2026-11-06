@@ -15,6 +15,7 @@
  * vision 只给长期出货多模态的三家（Anthropic / OpenAI / Google）。
  */
 import type { DimensionScore, DimensionKey, DimensionSet, ModelInfo } from './types.ts'
+import { listPriceOf } from './pricing.ts'
 
 /** 一个目录模型（评分表的一行）。 */
 export interface TemplateModel {
@@ -41,6 +42,26 @@ export interface TemplateVendor {
   vendorName: string
   /** 官方 API Base URL；开源托管/占位的厂商为空串，必须由用户填 customUrl。 */
   officialUrl: string
+  /**
+   * 官网 / 控制台地址（去这家申请 key 的地方）。
+   * 面板里那行「官网 ↗」就点到这里——不给链接，用户只能自己去搜，
+   * 而搜出来的常常是别人的中转站。
+   */
+  homepage?: string
+  /**
+   * 模型清单是否公开可取：设为 true 时面板不用密钥就能「拉取模型」，
+   * 因为这一家的 /models 本来就是匿名可读的（OpenCode Zen 就是这样）。
+   */
+  /**
+   * 不显示「中转站」这一行：国内厂商本来就直连，免费池和本机服务也没有中转的概念，
+   * 硬塞一个空地址框只会让人以为哪里没填。
+   */
+  noRelay?: boolean
+  /** 左栏分组：free = 免费池（单独一节），缺省进「内置」。 */
+  group?: 'free'
+  /** 面板里的一句话说明（这家是什么、要不要 key）。 */
+  note?: string
+  publicModels?: boolean
   models: TemplateModel[]
 }
 
@@ -72,6 +93,7 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     vendorId: 'anthropic',
     vendorName: 'Anthropic',
     officialUrl: 'https://api.anthropic.com/v1',
+    homepage: 'https://console.anthropic.com/settings/keys',
     models: [
       { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', tier: 'SSS', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: dims(dim(79.3, 'SSS'), dim(56.2, 'SS'), dim(80.7, 'SSS'), dim(85.4, 'SSS'), dim(64.7, 'SSS'), dim(73.2, 'SSS')), strengthTags: ['编程', '智能体', '推理'] },
       { id: 'claude-fable-5-1', name: 'Claude Fable 5.1', tier: 'SS', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: dims(dim(78.4, 'SSS'), dim(50.4, 'A+'), dim(77.1, 'SS'), dim(85.2, 'SSS'), dim(64.0, 'SSS'), dim(71.7, 'SSS')), strengthTags: ['编程', '智能体'] },
@@ -83,6 +105,7 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     vendorId: 'openai',
     vendorName: 'OpenAI',
     officialUrl: 'https://api.openai.com/v1',
+    homepage: 'https://platform.openai.com/api-keys',
     models: [
       { id: 'gpt-6-astra', name: 'GPT-6 Astra', tier: 'SS', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: dims(dim(77.8, 'SSS'), dim(61.2, 'SSS'), dim(77.9, 'SS'), dim(84.0, 'SSS'), dim(55.2, 'A+'), dim(71.7, 'SSS')), strengthTags: ['编程', '推理', '智能体'] },
       { id: 'gpt-6-1-sol', name: 'GPT-6.1 Sol', tier: 'SS', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: dims(dim(77.5, 'SSS'), dim(60.7, 'SSS'), dim(76.4, 'SS'), dim(80.4, 'SS'), dim(55.5, 'A+'), dim(70.8, 'SS')), strengthTags: ['编程'] },
@@ -93,67 +116,126 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     vendorId: 'google',
     vendorName: 'Google',
     officialUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    homepage: 'https://aistudio.google.com/apikey',
     models: [
       { id: 'gemini-4-argon', name: 'Gemini 4 Argon', tier: 'SS', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: dims(dim(78.5, 'SSS'), dim(46.8, 'A'), dim(75.1, 'SS'), dim(80.1, 'SS'), dim(62.7, 'SS'), dim(71.2, 'SSS')), strengthTags: ['推理', '多模态'] },
-      { id: 'gemini-3-8-flash', name: 'Gemini 3.8 Flash', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision'], scores: dims(dim(58.0, 'B+'), dim(45.9, 'B+'), dim(56.9, 'B'), dim(52.6, 'G+'), dim(47.3, 'B'), dim(64.8, 'S')), strengthTags: ['多模态', '快速'] },
+      { id: 'gemini-3-8-flash', name: 'Gemini 3.8 Flash', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision'], scores: dims(dim(58.0, 'B+'), dim(45.9, 'B+'), dim(56.9, 'B'), dim(52.6, 'B+'), dim(47.3, 'B'), dim(64.8, 'S')), strengthTags: ['多模态', '快速'] },
       { id: 'gemini-3-5-flash-lite', name: 'Gemini 3.5 Flash-Lite', tier: 'D', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision'], scores: dims(dim(29.1, 'D'), dim(43.3, 'B'), dim(31.5, 'D'), dim(12.2, 'D'), dim(33.5, 'D'), dim(52.6, 'B+')), strengthTags: ['快速'] },
     ],
   },
   {
     vendorId: 'meta',
-    vendorName: 'Meta (开源托管)',
+    vendorName: 'Muse AI',
     officialUrl: '',
+    homepage: 'https://www.meta.ai',
     models: [
-      { id: 'muse-wonder-full', name: 'Muse Wonder Full', tier: 'SS', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(76.1, 'SS'), dim(55.5, 'S'), dim(74.2, 'SS'), dim(79.4, 'SS'), dim(63.1, 'SSS'), dim(65.1, 'S')), strengthTags: ['做题', '智能体'] },
       { id: 'muse-wonder', name: 'Muse Wonder', tier: 'S', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(71.2, 'S'), dim(53.0, 'S'), dim(71.0, 'S'), dim(66.1, 'A'), dim(61.6, 'SS'), dim(62.7, 'S')), strengthTags: ['做题'] },
       { id: 'muse-spark-1-3', name: 'Muse Spark 1.3', tier: 'A', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(61.4, 'A'), dim(48.4, 'A'), dim(64.1, 'A'), dim(61.3, 'B+'), dim(58.1, 'S'), dim(62.5, 'S')), strengthTags: ['做题'] },
-      { id: 'muse-spark-open', name: 'Muse Spark Open', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(50.7, 'C+'), dim(47.8, 'A'), dim(49.7, 'C+'), dim(41.5, 'D'), dim(47.2, 'B'), dim(62.3, 'S')), strengthTags: ['做题'] },
       { id: 'muse-glimmer', name: 'Muse Glimmer', tier: 'D', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(28.9, 'D'), dim(44.0, 'B+'), dim(26.0, 'D'), dim(7.8, 'D'), dim(31.7, 'D'), dim(33.6, 'D')), strengthTags: ['小模型'] },
     ],
   },
   {
     vendorId: 'deepseek',
-    vendorName: 'DeepSeek',
+    noRelay: true,
+    note: '深度求索官方：国内直连，不需要中转站。',
+    vendorName: '深度求索 DeepSeek',
     officialUrl: 'https://api.deepseek.com/v1',
+    homepage: 'https://platform.deepseek.com/api_keys',
     models: [
-      { id: 'deepseek-v4-1-flash-1017', name: 'DeepSeek V4.1 Flash 1017', tier: 'A+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(62.4, 'A'), dim(51.8, 'A+'), dim(69.4, 'S'), dim(68.6, 'A+'), dim(60.1, 'SS'), dim(52.4, 'B+')), strengthTags: ['编程', '智能体'] },
-      { id: 'deepseek-v4-pro-0813', name: 'DeepSeek V4 Pro 0813', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(53.9, 'B'), dim(48.0, 'A'), dim(57.2, 'B+'), dim(41.1, 'D'), dim(49.7, 'B+'), dim(50.4, 'B')), strengthTags: ['推理'] },
+      { id: 'deepseek-v4-1-pro', name: '深度求索 DeepSeek V4.1 Pro', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['编程', '推理'] },
+      { id: 'deepseek-v4-1-flash-1017', name: '深度求索 DeepSeek Flash', tier: 'A+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(62.4, 'A'), dim(51.8, 'A+'), dim(69.4, 'S'), dim(68.6, 'A+'), dim(60.1, 'SS'), dim(52.4, 'B+')), strengthTags: ['编程', '智能体'] },
+      { id: 'deepseek-v4-pro-0813', name: '深度求索 DeepSeek V4 Pro', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(53.9, 'B'), dim(48.0, 'A'), dim(57.2, 'B+'), dim(41.1, 'D'), dim(49.7, 'B+'), dim(50.4, 'B')), strengthTags: ['推理'] },
     ],
   },
   {
     // 火山方舟（豆包）。注意：方舟上每个模型常以「推理接入点」id 暴露，
     // 面板里的「测试连接并拉取模型」会列出账号可用的真实 id，勾选即可。
     vendorId: 'doubao',
+    noRelay: true,
+    note: '火山方舟（豆包）官方端点：国内直连。',
     vendorName: '豆包 Doubao',
     officialUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    homepage: 'https://console.volcengine.com/ark',
     models: [
-      { id: 'doubao-seed-1-6', name: 'Doubao Seed 1.6', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: neutralScores(), strengthTags: ['智能体', '多模态'], imageInput: true },
-      { id: 'doubao-seed-1-6-flash', name: 'Doubao Seed 1.6 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'fast', 'vision'], scores: neutralScores(), strengthTags: ['快速', '多模态'], imageInput: true },
-      { id: 'doubao-1-5-pro-32k', name: 'Doubao 1.5 Pro 32K', tier: 'NA', contextWindow: 32_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: neutralScores(), strengthTags: ['文案'] },
-      { id: 'doubao-1-5-lite-32k', name: 'Doubao 1.5 Lite 32K', tier: 'NA', contextWindow: 32_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast'], scores: neutralScores(), strengthTags: ['快速'] },
+      { id: 'doubao-seed-2-1', name: '豆包 Doubao Seed 2.1', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: neutralScores(), strengthTags: ['智能体', '多模态'], imageInput: true },
+      { id: 'doubao-seed-1-6', name: '豆包 Seed 1.6', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'vision', 'tool-use'], scores: neutralScores(), strengthTags: ['智能体', '多模态'], imageInput: true },
+      { id: 'doubao-seed-1-6-flash', name: '豆包 Seed 1.6 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'fast', 'vision'], scores: neutralScores(), strengthTags: ['快速', '多模态'], imageInput: true },
     ],
+  },
+  {
+    // 百度千帆：ERNIE Speed / Lite 系列长期免费，OpenAI 兼容端点在 /v2。
+    vendorId: 'baidu',
+    noRelay: true,
+    group: 'free',
+    note: '百度千帆：ERNIE Speed / Lite 系列长期免费（中文任务够用），OpenAI 兼容端点在 qianfan.baidubce.com/v2。免费名单会调整，建议先点「拉取模型」看当前有什么。',
+    vendorName: '百度千帆 ERNIE',
+    officialUrl: 'https://qianfan.baidubce.com/v2',
+    homepage: 'https://console.bce.baidu.com/qianfan/overview',
+    models: [
+      { id: 'ernie-speed-128k', name: '百度 ERNIE-Speed 免费', tier: 'NA', contextWindow: 128000, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['coding', 'fast'], scores: neutralScores(), strengthTags: ['免费', '快速', '中文'] },
+      { id: 'ernie-speed-pro-128k', name: '百度 ERNIE-Speed Pro 免费', tier: 'NA', contextWindow: 128000, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['coding', 'fast'], scores: neutralScores(), strengthTags: ['免费', '快速', '中文'] },
+      { id: 'ernie-lite-8k', name: '百度 ERNIE-Lite 免费', tier: 'NA', contextWindow: 8000, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['fast'], scores: neutralScores(), strengthTags: ['免费', '快速', '中文'] },
+    ],
+  },
+  {
+    // 硅基流动：一批开源小模型常驻免费额度。
+    vendorId: 'siliconflow',
+    noRelay: true,
+    group: 'free',
+    note: '硅基流动（国内平台）：Qwen、GLM、DeepSeek 蒸馏版这批开源小模型常驻免费额度，能力不算强但稳定、不要钱，适合当「极致便宜」档的兜底。填自己的 key 后先点上面的「拉取模型」看当前免费名单。',
+    vendorName: '硅基流动 SiliconFlow',
+    officialUrl: 'https://api.siliconflow.cn/v1',
+    homepage: 'https://cloud.siliconflow.cn/account/ak',
+    models: [
+      { id: 'Qwen/Qwen2.5-7B-Instruct', name: '硅基 Qwen2.5-7B 免费', tier: 'NA', contextWindow: 32000, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['coding'], scores: neutralScores(), strengthTags: ['免费', '小模型'] },
+      { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B', name: '硅基 DeepSeek-R1-7B 免费', tier: 'NA', contextWindow: 32000, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['reasoning'], scores: neutralScores(), strengthTags: ['免费', '推理', '小模型'] },
+    ],
+  },
+  {
+    // OpenRouter：带 :free 后缀的模型由它自己补贴（有频率限制，需要能连上它的出口）。
+    vendorId: 'openrouter',
+    noRelay: true,
+    group: 'free',
+    note: 'OpenRouter 免费池：带 :free 后缀的模型由 OpenRouter 自己补贴，不按 token 计费，但有每分钟次数限制、且需要能连上境外出口。胜在型号多、能顺手用上 GPT / Claude 的免费额度。',
+    vendorName: 'OpenRouter 免费池',
+    officialUrl: 'https://openrouter.ai/api/v1',
+    homepage: 'https://openrouter.ai/keys',
+    models: [
+      { id: 'deepseek/deepseek-r1:free', name: 'OpenRouter DeepSeek-R1 免费', tier: 'NA', contextWindow: 163840, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['reasoning'], scores: neutralScores(), strengthTags: ['免费', '推理'] },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'OpenRouter Llama-3.3-70B 免费', tier: 'NA', contextWindow: 65536, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['coding'], scores: neutralScores(), strengthTags: ['免费', '开源'] },
+    ],
+  },
+  {
+    vendorId: 'opencode',
+    noRelay: true,
+    note: 'OpenCode 官方网关：模型清单公开可拉（不填 key 也能拉）。注意它的免费型号只对官方客户端开放，付费 / Go 模型填自己的 key 才能调用。',
+    vendorName: 'OpenCode Zen',
+    officialUrl: 'https://opencode.ai/zen/v1',
+    homepage: 'https://opencode.ai/auth',
+    publicModels: true,
+    // 目录里不放静态清单：这一家有 80 多个模型、且随时增减，
+    // 面板点「拉取模型」就能把真实的 id / 名字 / 上下文窗口拿回来。
+    models: [],
   },
   {
     // Agnes（模型清单来自本机真实 /models 探测，见 vendors.spec 同源验证）。
     vendorId: 'agnes',
+    noRelay: true,
+    note: 'Agnes 官方端点。',
     vendorName: 'Agnes',
     officialUrl: 'https://api.agnes-ai.cn/v1',
+    homepage: 'https://agnes-ai.cn',
     models: [
       { id: 'agnes-3-0-flash', name: 'Agnes 3.0 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding', 'tool-use'], scores: neutralScores(), strengthTags: ['快速', '编程'] },
       { id: 'agnes-2-5-pro', name: 'Agnes 2.5 Pro', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
-      { id: 'agnes-2-5-pro-alpha', name: 'Agnes 2.5 Pro Alpha', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
-      { id: 'agnes-2-5-pro-beta', name: 'Agnes 2.5 Pro Beta', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
-      { id: 'agnes-2-5-flash', name: 'Agnes 2.5 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['fast', 'coding', 'tool-use'], scores: neutralScores(), strengthTags: ['快速'] },
       { id: 'agnes-image-2-5-flash', name: 'Agnes Image 2.5 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['image_gen'], scores: neutralScores(), strengthTags: ['图像生成'], imageOutput: true },
-      { id: 'agnes-image-2-1-flash', name: 'Agnes Image 2.1 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['image_gen'], scores: neutralScores(), strengthTags: ['图像生成'], imageOutput: true },
-      { id: 'agnes-video-2-5', name: 'Agnes Video 2.5', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['video_gen'], scores: neutralScores(), strengthTags: ['视频'], videoOutput: true },
-      { id: 'agnes-video-2-5-flash', name: 'Agnes Video 2.5 Flash', tier: 'NA', contextWindow: 8_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['video_gen'], scores: neutralScores(), strengthTags: ['视频'], videoOutput: true },
     ],
   },
   {
     vendorId: 'inkling',
     vendorName: 'Inkling',
     officialUrl: '',
+    homepage: 'https://thinkingmachines.ai',
     models: [
       { id: 'inkling', name: 'Inkling', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['reasoning'], scores: neutralScores(), strengthTags: ['做题'] },
       { id: 'inkling-small', name: 'Inkling Small', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['reasoning'], scores: neutralScores(), strengthTags: ['小模型'] },
@@ -161,54 +243,73 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   },
   {
     vendorId: 'moonshot',
-    vendorName: 'Moonshot AI',
+    noRelay: true,
+    note: '月之暗面官方：国内直连。',
+    vendorName: '月之暗面 Moonshot',
     officialUrl: 'https://api.moonshot.cn/v1',
+    homepage: 'https://platform.moonshot.cn/console/api-keys',
     models: [
-      { id: 'kimi-k3-1-pro', name: 'Kimi K3.1 Pro', tier: 'S', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(73.2, 'SS'), dim(56.6, 'SS'), dim(75.0, 'SS'), dim(70.5, 'A+'), dim(57.0, 'A+'), dim(64.8, 'S')), strengthTags: ['做题', '推理'] },
+      { id: 'kimi-k3', name: '月之暗面 Kimi K3', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['编程'] },
+      { id: 'kimi-k3-1-pro', name: '月之暗面 Kimi K3.1 Pro', tier: 'S', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(73.2, 'SS'), dim(56.6, 'SS'), dim(75.0, 'SS'), dim(70.5, 'A+'), dim(57.0, 'A+'), dim(64.8, 'S')), strengthTags: ['做题', '推理'] },
     ],
   },
   {
     vendorId: 'alibaba',
-    vendorName: 'Alibaba Qwen',
+    noRelay: true,
+    note: '阿里云百炼（DashScope）兼容模式端点：国内直连。',
+    vendorName: '通义千问 Qwen',
     officialUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    homepage: 'https://bailian.console.aliyun.com/',
     models: [
-      { id: 'qwen3-8-max-0902', name: 'Qwen3.8 Max 0902', tier: 'A', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(60.5, 'A'), dim(50.2, 'A+'), dim(63.8, 'A'), dim(58.4, 'B'), dim(56.1, 'A+'), dim(56.0, 'A')), strengthTags: ['文案'] },
-      { id: 'qwen3-8-flash-next', name: 'Qwen3.8-Flash-Next', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(53.1, 'B'), dim(48.5, 'A+'), dim(52.6, 'B'), dim(36.7, 'C'), dim(53.7, 'A'), dim(55.1, 'C+')), strengthTags: ['快速', '中文'] },
-      { id: 'qwen3-8-27b', name: 'Qwen3.8 27B', tier: 'C+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(40.4, 'C'), dim(52.4, 'A+'), dim(49.8, 'C+'), dim(34.0, 'D'), dim(51.7, 'B+'), dim(45.0, 'C+')), strengthTags: ['小模型'] },
+      { id: 'qwen3-8-vl', name: '通义千问 Qwen3.8-VL', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'vision'], scores: neutralScores(), strengthTags: ['多模态'], imageInput: true },
+      { id: 'qwen3-8-max-0902', name: '通义千问 Qwen3.8-Max', tier: 'A', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(60.5, 'A'), dim(50.2, 'A+'), dim(63.8, 'A'), dim(58.4, 'B'), dim(56.1, 'A+'), dim(56.0, 'A')), strengthTags: ['文案'] },
+      { id: 'qwen3-8-flash-next', name: '通义千问 Qwen3.8 Flash Next', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(53.1, 'B'), dim(48.5, 'A+'), dim(52.6, 'B'), dim(36.7, 'C'), dim(53.7, 'A'), dim(55.1, 'C+')), strengthTags: ['快速', '中文'] },
     ],
   },
   {
     vendorId: 'xiaomi',
-    vendorName: 'Xiaomi',
+    noRelay: true,
+    note: '小米 MiMo 官方端点。',
+    vendorName: '小米 Xiaomi',
     officialUrl: '',
+    homepage: 'https://platform.xiaomimimo.com',
     models: [
-      { id: 'mimo-v2-6-pro', name: 'MiMo-V2.6-Pro', tier: 'A', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(62.7, 'A'), dim(49.6, 'A'), dim(63.7, 'A'), dim(66.2, 'A'), dim(56.4, 'A+'), dim(54.2, 'B+')), strengthTags: ['推理'] },
-      { id: 'mimo-v2-6-flash', name: 'MiMo-V2.6-Flash', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(56.2, 'B+'), dim(43.0, 'B'), dim(57.2, 'B+'), dim(49.5, 'C+'), dim(53.5, 'A'), dim(43.7, 'C+')), strengthTags: ['便宜', '批量'] },
+      { id: 'mimo-v2-6-pro', name: '小米 MiMo 2.6 Pro', tier: 'A', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(62.7, 'A'), dim(49.6, 'A'), dim(63.7, 'A'), dim(66.2, 'A'), dim(56.4, 'A+'), dim(54.2, 'B+')), strengthTags: ['推理'] },
+      { id: 'mimo-v2-6-flash', name: '小米 MiMo 2.6 Flash', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(56.2, 'B+'), dim(43.0, 'B'), dim(57.2, 'B+'), dim(49.5, 'C+'), dim(53.5, 'A'), dim(43.7, 'C+')), strengthTags: ['便宜', '批量'] },
     ],
   },
   {
     vendorId: 'zhipu',
-    vendorName: 'Z.ai / 智谱',
+    noRelay: true,
+    note: '智谱官方：GLM-4.5-Flash 等 Flash 型号长期免费。',
+    vendorName: '智谱 Z.ai',
     officialUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    homepage: 'https://open.bigmodel.cn/usercenter/apikeys',
     models: [
-      { id: 'glm-5-3', name: 'GLM-5.3', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(56.1, 'B+'), dim(48.4, 'A'), dim(64.3, 'A'), dim(39.8, 'D'), dim(57.2, 'S'), dim(57.1, 'A')), strengthTags: ['文案', '中文'] },
-      { id: 'glm-5-3-flash', name: 'GLM-5.3-Flash', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(43.7, 'C'), dim(45.8, 'B+'), dim(49.6, 'C+'), dim(49.4, 'C+'), dim(55.6, 'A+'), dim(53.7, 'B+')), strengthTags: ['快速', '中文'] },
+      { id: 'glm-4-5-flash', name: '智谱 GLM-4.5-Flash 免费', tier: 'NA', contextWindow: 128000, costPer1kInput: 0, costPer1kOutput: 0, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['免费', '中文'] },
+      { id: 'glm-5-3', name: '智谱 GLM-5.3', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(56.1, 'B+'), dim(48.4, 'A'), dim(64.3, 'A'), dim(39.8, 'D'), dim(57.2, 'S'), dim(57.1, 'A')), strengthTags: ['文案', '中文'] },
+      { id: 'glm-5-3-flash', name: '智谱 GLM-5.3 Flash', tier: 'B', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(43.7, 'C'), dim(45.8, 'B+'), dim(49.6, 'C+'), dim(49.4, 'C+'), dim(55.6, 'A+'), dim(53.7, 'B+')), strengthTags: ['快速', '中文'] },
     ],
   },
   {
     vendorId: 'minimax',
+    noRelay: true,
+    note: 'MiniMax 官方端点。',
     vendorName: 'MiniMax',
     officialUrl: 'https://api.minimax.chat/v1',
+    homepage: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
     models: [
-      { id: 'minimax-m3-1-flash', name: 'MiniMax-M3.1-Flash', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(58.9, 'B+'), dim(49.6, 'A'), dim(58.6, 'B'), dim(57.3, 'B'), dim(51.6, 'B+'), dim(57.8, 'A')), strengthTags: ['做题', '快速'] },
-      { id: 'minimax-m3', name: 'MiniMax-M3', tier: 'C', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(44.8, 'C'), dim(42.9, 'B+'), dim(48.4, 'D'), dim(38.5, 'D'), dim(44.8, 'C+'), dim(44.8, 'B')), strengthTags: ['文案'] },
+      { id: 'minimax-m3-1-preview', name: '稀宇 MiniMax M3.1 Preview', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
+      { id: 'minimax-m3-1-flash', name: '稀宇 MiniMax M3.1 Flash', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(58.9, 'B+'), dim(49.6, 'A'), dim(58.6, 'B'), dim(57.3, 'B'), dim(51.6, 'B+'), dim(57.8, 'A')), strengthTags: ['做题', '快速'] },
     ],
   },
   {
     vendorId: 'xai',
     vendorName: 'xAI',
     officialUrl: 'https://api.x.ai/v1',
+    homepage: 'https://console.x.ai/',
     models: [
+      { id: 'grok-4-7-mini', name: 'Grok 4.7 Mini', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'fast'], scores: neutralScores(), strengthTags: ['快速', '前端'] },
       { id: 'grok-4-7', name: 'Grok 4.7', tier: 'A', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: dims(dim(48.0, 'C+'), dim(48.3, 'A'), dim(63.7, 'A'), dim(61.8, 'B+'), dim(58.2, 'S'), dim(66.0, 'SS')), strengthTags: ['前端', '编程'] },
     ],
   },
@@ -216,28 +317,52 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     vendorId: 'mistral',
     vendorName: 'Mistral AI',
     officialUrl: 'https://api.mistral.ai/v1',
+    homepage: 'https://console.mistral.ai/api-keys/',
     models: [
       { id: 'mistral-large-4-preview', name: 'Mistral Large 4 Preview', tier: 'C+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(41.0, 'C'), dim(44.6, 'B+'), dim(54.3, 'B'), dim(21.3, 'D'), dim(52.0, 'B+'), dim(47.4, 'B')), strengthTags: ['文案'] },
-      { id: 'mistral-medium-3-5', name: 'Mistral Medium 3.5', tier: 'D', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(28.9, 'D'), dim(39.7, 'C+'), dim(19.9, 'D'), dim(9.0, 'D'), dim(28.9, 'D'), dim(31.6, 'D')), strengthTags: ['文案'] },
       { id: 'mistral-small-4', name: 'Mistral Small 4', tier: 'D', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(24.8, 'D'), dim(25.7, 'D'), dim(18.3, 'D'), dim(6.0, 'D'), dim(27.7, 'D'), dim(34.8, 'D')), strengthTags: ['文案'] },
     ],
   },
   {
-    vendorId: 'stepfun',
-    vendorName: 'StepFun / 阶跃星辰',
-    officialUrl: 'https://api.stepfun.com/v1',
+    vendorId: 'tencent',
+    noRelay: true,
+    note: '腾讯混元官方（OpenAI 兼容端点）。',
+    vendorName: '腾讯混元 Hunyuan',
+    officialUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+    homepage: 'https://console.cloud.tencent.com/hunyuan/api-key',
     models: [
-      { id: 'step-5-preview', name: 'Step 5 Preview', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(54.4, 'B'), dim(53.3, 'S'), dim(59.4, 'B+'), dim(37.4, 'D'), dim(50.2, 'B+'), dim(58.2, 'A')), strengthTags: ['做题'] },
-      { id: 'step-3-7-flash', name: 'Step 3.7 Flash', tier: 'D', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(29.0, 'D'), dim(37.1, 'C+'), dim(23.7, 'D'), dim(7.7, 'D'), dim(27.8, 'D'), dim(37.9, 'D')), strengthTags: ['快速'] },
-      { id: 'step3-vl-10b', name: 'Step3 VL 10B', tier: 'NA', contextWindow: 32_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['reasoning', 'vision'], scores: neutralScores(), strengthTags: ['多模态', '小模型'], imageInput: true },
+      { id: 'hy4-flash', name: '腾讯 Hy4 Flash', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'fast'], scores: neutralScores(), strengthTags: ['快速'] },
+      { id: 'hy4-preview', name: '腾讯 Hy4 Preview', tier: 'NA', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning', 'tool-use'], scores: neutralScores(), strengthTags: ['推理'] },
+    ],
+  },
+  {
+    vendorId: 'stepfun',
+    noRelay: true,
+    note: '阶跃星辰官方端点。',
+    vendorName: '阶跃星辰 StepFun',
+    officialUrl: 'https://api.stepfun.com/v1',
+    homepage: 'https://platform.stepfun.com/interface-key',
+    models: [
+      { id: 'step-5-preview', name: '阶跃星辰 Step 5 Preview', tier: 'B+', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(54.4, 'B'), dim(53.3, 'S'), dim(59.4, 'B+'), dim(37.4, 'D'), dim(50.2, 'B+'), dim(58.2, 'A')), strengthTags: ['做题'] },
+      { id: 'step-3-7-flash', name: '阶跃星辰 Step 3.7 Flash', tier: 'D', contextWindow: 128_000, costPer1kInput: null, costPer1kOutput: null, capabilities: ['coding', 'reasoning'], scores: dims(dim(29.0, 'D'), dim(37.1, 'C+'), dim(23.7, 'D'), dim(7.7, 'D'), dim(27.8, 'D'), dim(37.9, 'D')), strengthTags: ['快速'] },
     ],
   },
 ]
 
 /** 面板厂家 Tab 的展示顺序（产品指定的九家在前，其余目录厂商随后，Custom 永远最后）。 */
+/**
+ * 左栏厂家的展示顺序：按知名度排，不按字母也不按内部 id。
+ *
+ * 排序依据是「普通用户听说过的概率」：国际三巨头 → 马斯克 / Meta →
+ * 国内第一梯队（DeepSeek、豆包、通义、Kimi、智谱、混元）→ 其余。
+ * 免费池那三家不在这里，它们有自己的分区。
+ */
 export const VENDOR_TAB_ORDER: readonly string[] = [
-  'anthropic', 'openai', 'google', 'deepseek', 'alibaba', 'moonshot', 'zhipu', 'xiaomi', 'minimax',
-  'doubao', 'agnes',
+  'openai', 'anthropic', 'google',
+  'xai', 'meta',
+  'deepseek', 'doubao', 'alibaba', 'moonshot', 'zhipu', 'tencent', 'minimax', 'xiaomi',
+  'mistral', 'stepfun',
+  'opencode', 'agnes', 'inkling',
 ]
 
 /** 把任意 id 归一化成可比形态：小写 + 去掉分隔符。 */
@@ -260,8 +385,24 @@ export function matchTemplateModel(vendor: TemplateVendor, modelId: string): Tem
   return undefined
 }
 
+/**
+ * 全局找一份内置档案：不管模型挂在哪个厂家下面。
+ *
+ * 自定义厂商（或中转站）里出现的型号，只要 id 能对上内置目录里的某一条，
+ * 就该沿用那一份强度/擅长/价目——这些数据是内置的，跟「从哪条线路接入」无关。
+ * 对不上就老老实实当未收录，绝不编。
+ */
+export function findModelProfile(modelId: string): { vendor: TemplateVendor, model: TemplateModel } | undefined {
+  for (const vendor of PROVIDER_TEMPLATES) {
+    const model = matchTemplateModel(vendor, modelId)
+    if (model !== undefined) return { vendor, model }
+  }
+  return undefined
+}
+
 /** 目录条目 → 路由层的 ModelInfo 视图。 */
 export function templateModelToInfo(vendor: TemplateVendor, model: TemplateModel): ModelInfo {
+  const price = listPriceOf(model.id)
   return {
     id: model.id,
     name: model.name,
@@ -276,6 +417,8 @@ export function templateModelToInfo(vendor: TemplateVendor, model: TemplateModel
     ...(model.imageInput === true ? { imageInput: true } : {}),
     ...(model.imageOutput === true ? { imageOutput: true } : {}),
     ...(model.videoOutput === true ? { videoOutput: true } : {}),
+    // 榜单估算价：目录未收录时为未定价，面板显示 —，绝不冒充 0。
+    ...(price === undefined ? {} : { price }),
   }
 }
 

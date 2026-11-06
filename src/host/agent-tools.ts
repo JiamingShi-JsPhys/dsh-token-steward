@@ -35,7 +35,7 @@ export interface StewardToolDeps {
   gatewayBaseUrl(): string | undefined
 }
 
-const MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power']
+const MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power', 'free']
 
 function vendorSummary(vendor: VendorConfig): Record<string, unknown> {
   return {
@@ -62,7 +62,7 @@ export async function executeStewardAction(deps: StewardToolDeps, args: StewardA
 
   if (action === 'set_mode') {
     if (args.mode === undefined || !MODES.includes(args.mode as RoutingMode)) {
-      return 'mode 必须是 frugal | balanced | max_power'
+      return 'mode 必须是 frugal | balanced | max_power | free'
     }
     await deps.setMode(args.mode as RoutingMode)
     return '调度模式已切换为 ' + args.mode
@@ -152,5 +152,5 @@ export const STEWARD_TOOL_PARAMETERS = {
   },
   model_id: { type: 'string', description: '要打标签的模型 id（tag_model 时必填）' },
   tags: { type: 'array', description: '擅长标签数组（tag_model 时必填），如 ["编程", "文案", "做题"]' },
-  mode: { type: 'string', description: '调度模式：frugal | balanced | max_power（set_mode 时必填）' },
+  mode: { type: 'string', description: '调度模式：frugal | balanced | max_power | free（free = 白嫖，只走零成本模型；set_mode 时必填）' },
 }

@@ -78,10 +78,10 @@ steward:pin/<provider>/<model>  ← 直通某具体模型（逃生门，仍走�
         apiKeyEnv: STEWARD_LOCAL_TOKEN      # 网关自己签发的 loopback 令牌
         baseURL: http://127.0.0.1:<port>/v1
         models:
-          - { id: 'steward:auto', name: 'Steward Auto' }
-          - { id: 'steward:frugal', name: 'Steward Frugal' }
+          - { id: 'steward:auto', name: '管家·自动' }
+          - { id: 'steward:frugal', name: '管家·极致便宜' }
           - { id: 'steward:balanced', name: 'Steward Efficiency' }
-          - { id: 'steward:max_power', name: 'Steward Max Power' }
+          - { id: 'steward:max_power', name: '管家·最强火力' }
 ```
 
 > **待验证 T1**：`llm-pi-ai` 是否接受含 `:` 的模型 id。若拒绝，退回下划线分段（`steward__auto`）。一条 curl 探针即可定论。

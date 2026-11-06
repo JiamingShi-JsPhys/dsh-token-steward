@@ -11,6 +11,7 @@
  */
 import type { AttemptResult, ErrorKind, PoolConfig, ProviderEntry, ModelEntry, RouteDecision, TokenUsage } from '../core/types.ts'
 import { classifyFailure, errorMessageOf } from '../core/classify.ts'
+import { estimateInputTokens } from '../core/intent.ts'
 
 /** fetch 的最小形状；测试注入假实现，生产用全局 fetch。 */
 export type FetchLike = (input: string, init: Record<string, unknown>) => Promise<Response>
@@ -87,6 +88,27 @@ export function rewriteBody(body: Record<string, unknown>, upstreamModel: string
   return next
 }
 
+/**
+ * 把出站 max_tokens 压进这个模型的剩余窗口。
+ *
+ * 客户端（含 DSH 自己）会按「模型很大」要一个 64k 的输出上限；上游窗口 128k、
+ * 这一轮输入 67k 时，64k 的输出就超了，Agnes 这类上游直接 400
+ * （`max_tokens 不能超过 65536` / context_length_exceeded）。
+ * 路由器已经保证输入放得下，这里把输出砍到「窗口 - 输入」，请求就能跑完。
+ */
+export function clampOutputToWindow(body: Record<string, unknown>, contextWindow: number): Record<string, unknown> {
+  if (!(contextWindow > 0)) return body
+  const room = contextWindow - estimateInputTokens(body)
+  if (room <= 0) return body
+  for (const field of ['max_tokens', 'max_completion_tokens'] as const) {
+    const value = body[field]
+    if (typeof value === 'number' && Number.isFinite(value) && value > room) {
+      body[field] = Math.floor(room)
+    }
+  }
+  return body
+}
+
 /** 上游 URL：endpoint 已经是 …/v1，拼上 /chat/completions。 */
 export function upstreamUrl(providerEntry: ProviderEntry): string {
   const base = providerEntry.endpoint.replace(/\/+$/, '')
@@ -153,7 +175,7 @@ export async function attemptOnce(
     const response = await context.fetchImpl(upstreamUrl(found.provider), {
       method: 'POST',
       headers: buildHeaders(found.provider, secret),
-      body: JSON.stringify(rewriteBody(context.body, found.model.id)),
+      body: JSON.stringify(clampOutputToWindow(rewriteBody(context.body, found.model.id), found.model.context_window)),
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
 

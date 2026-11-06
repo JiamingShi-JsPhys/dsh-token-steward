@@ -16,7 +16,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
-import { createElement, type ReactElement } from 'react'
+import { createElement, useEffect, useReducer, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createPanelClient } from './api.ts'
 import { createPanelStore, type PanelStore } from './store.ts'
@@ -141,6 +141,11 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
     void store.refreshVendors()
 
     function SettingsSection(): ReactElement {
+      // 设置页是 React 组件，store 却在 React 之外。不订阅的话，宿主数据变了
+      // （删掉一家、导入一家、保存之后）组件不会重渲染，左栏还挂着已经删掉的那一家——
+      // 用户看到的就是「删除键没反应」。这里把 store 的通知接进 React 的渲染周期。
+      const [, bump] = useReducer((n: number) => n + 1, 0)
+      useEffect(() => store.subscribe(() => { bump() }), [])
       const state = store.getState()
       return createElement(SettingsPanel, {
         snapshot: state.snapshot,
@@ -149,9 +154,13 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
         retainDays: 180,
         vendors: state.vendors,
         onReload: () => { void store.reload() },
+        onRefreshVendors: () => { void store.refreshVendors() },
         onSelectMode: (mode) => { void store.setMode(mode) },
         onSaveVendors: (vendors) => { void store.saveVendors(state.vendors?.mode ?? 'frugal', vendors) },
         onDiscover: (params) => store.discoverModels(params),
+        onImportHarness: (scope) => store.importHarness(scope),
+        onSyncHarness: (vendorId) => store.syncHarness(vendorId),
+        onDeleteVendor: (vendorId) => store.deleteVendor(vendorId),
         t: translate,
       }) as ReactElement
     }

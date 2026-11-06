@@ -23,10 +23,12 @@ import type {
   RouteIntent,
   RoutingMode,
   SnapshotInput,
+  TokenUsage,
   UsageFacts,
 } from './types.ts'
 import { beginAttempt, createHealth, settleAttempt, unavailableReason, visibleState } from './health.ts'
-import { scoreModel } from './scorers.ts'
+import { isFreeModel, scoreModel, totalDimensionScore } from './scorers.ts'
+import { savingAgainst } from './pricing.ts'
 
 /** 路由事件的环形缓冲容量。 */
 export const RECENT_EVENT_CAP = 40
@@ -71,6 +73,8 @@ function indexModels(config: PoolConfig): IndexedModel[] {
 
 /** 一个候选是否满足意图的硬要求；不满足时给出人话原因。 */
 export function filterReason(model: ModelEntry, intent: RouteIntent): string | undefined {
+  // 向量 / 重排模型对 chat/completions 没有意义，永远不作候选。
+  if (model.chat === false) return 'not-a-chat-model'
   for (const tag of intent.requiredCapabilities) {
     if (!model.capabilities.includes(tag)) return 'missing-capability:' + tag
   }
@@ -78,7 +82,12 @@ export function filterReason(model: ModelEntry, intent: RouteIntent): string | u
     if (!model.input_modalities.includes(modality)) return 'missing-modality:' + modality
   }
   if (intent.needsTools && !model.capabilities.includes('tool-use')) return 'missing-capability:tool-use'
-  const needed = intent.estimatedInputTokens + intent.expectedOutputTokens
+  // 窗口只按**输入**硬过滤。`max_tokens` 是客户端随口要的上限（DSH 动辄要 64k），
+  // 拿「输入 + 期望输出」去卡窗口会把一整类本来能跑的请求挡在门外：128k 的模型
+  // 配 67k 输入完全跑得动，只是输出塞不下 65k 而已。真正的输出量由网关按
+  // 「窗口 - 输入」压下去（upstream 的 clampOutputToWindow），不必在这里拒。
+  const RESERVED_OUTPUT_TOKENS = 256
+  const needed = intent.estimatedInputTokens + RESERVED_OUTPUT_TOKENS
   if (model.context_window < needed) return 'window-too-small:' + String(model.context_window) + '<' + String(needed)
   if (model.availability === 'offline') return 'offline'
   return undefined
@@ -107,10 +116,21 @@ export interface StewardRouter {
   getMode(): RoutingMode
   noteAgent(agentId: string, provider: string, model: string, now: number): void
   /**
+   * 登记一次真实出站的 token 用量：按「六维总和最高的基准模型」折算节省。
+   * 网关在拿到 usage 的每一处都调用这里（非流式与流式收尾各一次）。
+   */
+  noteUsage(provider: string, model: string, usage: TokenUsage, now: number): void
+  /**
    * 登记一次本地缓存命中：路由监控里可见（cached 标记），但不动健康状态机——
    * 没有真实的上游尝试，就没有延迟样本，也没有熔断语义。
    */
-  noteCacheHit(requestId: string, provider: string, model: string, now: number): void
+  noteCacheHit(
+    requestId: string,
+    provider: string,
+    model: string,
+    now: number,
+    saved?: { tokens: number, cost: { currency: string, amount: number } | null },
+  ): void
   snapshot(now: number, input?: SnapshotInput): MatrixSnapshot
   /**
    * 为一次尝试占位（并发计数 + rpm 滑窗）。
@@ -152,6 +172,36 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
   /** 每个请求的降级历史，report 收口时写进事件。 */
   const attempts = new Map<string, Array<{ provider: string; model: string; errorKind: RouteEventView['degradedFrom'][number]['errorKind'] }>>()
   const startedAt = new Map<string, number>()
+  /** 今日已省的累计器（进程内，跨日由面板的「今日」口径自然截断）。 */
+  const savingsState = {
+    cacheTokens: 0,
+    cacheHits: 0,
+    routingTokens: 0,
+    routingCosts: new Map<string, number>(),
+    cacheCosts: new Map<string, number>(),
+  }
+  /** 「今日」口径：跨本地日就清空节省累计，绝不把昨天的省算进今天。 */
+  let savingsDay = ''
+  function rollSavingsDay(now: number): void {
+    const day = new Date(now).toDateString()
+    if (savingsDay === '') {
+      savingsDay = day
+      return
+    }
+    if (day === savingsDay) return
+    savingsDay = day
+    savingsState.cacheTokens = 0
+    savingsState.cacheHits = 0
+    savingsState.routingTokens = 0
+    savingsState.routingCosts = new Map()
+    savingsState.cacheCosts = new Map()
+  }
+
+  /** 基准模型：六维总和最高（打平时取配置文件里更靠前的那个）。 */
+  const baseline = models.reduce<IndexedModel | undefined>((best, entry) => {
+    if (best === undefined) return entry
+    return totalDimensionScore(entry.model) > totalDimensionScore(best.model) ? entry : best
+  }, undefined)
 
   /** 取（必要时创建）一个模型的健康记录。 */
   function healthFor(key: string): ModelHealth {
@@ -210,6 +260,12 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
       const reason = filterReason(entry.model, intent)
       if (reason !== undefined) {
         rejected.push({ provider: entry.provider.provider_name, model: entry.model.id, reason })
+        continue
+      }
+      // 白嫖模式：只认零成本的模型。付费模型不是「排后面」，是直接不参与——
+      // 这个模式的承诺就是绝不偷偷花钱，选不到就报错。
+      if (currentMode === 'free' && !isFreeModel(entry.model)) {
+        rejected.push({ provider: entry.provider.provider_name, model: entry.model.id, reason: 'not-free' })
         continue
       }
       const health = healthFor(key)
@@ -336,7 +392,21 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
     return currentMode
   }
 
-  function noteCacheHit(requestId: string, provider: string, model: string, now: number): void {
+  function noteCacheHit(
+    requestId: string,
+    provider: string,
+    model: string,
+    now: number,
+    saved?: { tokens: number, cost: { currency: string, amount: number } | null },
+  ): void {
+    rollSavingsDay(now)
+    savingsState.cacheHits += 1
+    if (saved !== undefined) {
+      savingsState.cacheTokens += Math.max(0, saved.tokens)
+      if (saved.cost !== null) {
+        savingsState.cacheCosts.set(saved.cost.currency, (savingsState.cacheCosts.get(saved.cost.currency) ?? 0) + saved.cost.amount)
+      }
+    }
     const event: RouteEventView = {
       at: now,
       requestId,
@@ -353,6 +423,16 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
     if (recent.length > RECENT_EVENT_CAP) recent.splice(0, recent.length - RECENT_EVENT_CAP)
   }
 
+  function noteUsage(provider: string, model: string, usage: TokenUsage, now: number): void {
+    rollSavingsDay(now)
+    const chosen = models.find((entry) => entry.key === modelKey(provider, model))
+    if (chosen === undefined || baseline === undefined) return
+    const saved = savingAgainst(chosen.model, baseline.model, usage)
+    if (saved === null || saved.amount <= 0) return
+    savingsState.routingTokens += Math.max(0, usage.input + usage.output)
+    savingsState.routingCosts.set(saved.currency, (savingsState.routingCosts.get(saved.currency) ?? 0) + saved.amount)
+  }
+
   function noteAgent(agentId: string, provider: string, model: string, now: number): void {
     const existing = agents.get(agentId)
     agents.set(agentId, {
@@ -365,6 +445,7 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
   }
 
   function snapshot(now: number, input?: SnapshotInput): MatrixSnapshot {
+    rollSavingsDay(now)
     const usage: UsageFacts = input?.usage ?? {}
     const cards: ModelCardView[] = []
     let todayTokens = 0
@@ -395,7 +476,9 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
         ...(entry.model.tier !== undefined ? { tier: entry.model.tier } : {}),
         ...(entry.model.dimensions !== undefined ? { dimensions: entry.model.dimensions } : {}),
         capabilities: entry.model.capabilities.slice(),
+        ...(entry.model.chat === false ? { chat: false } : {}),
         costLevel: entry.model.cost_level,
+        ...(entry.model.freeAssumed === true ? { freeAssumed: true } : {}),
         contextWindow: entry.model.context_window,
         availability: entry.model.availability,
         health: visibleState(health, now),
@@ -429,6 +512,22 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
         degradedRequests,
         unpricedModels: unpriced,
       },
+      savings: (() => {
+        // 缓存侧优先用持久层（SQLite）报的「今日」数字；没有时退回进程内累计。
+        const cacheTokens = input?.cacheSavings?.tokens ?? savingsState.cacheTokens
+        const cacheHits = input?.cacheSavings?.cacheHits ?? savingsState.cacheHits
+        const costs = new Map(savingsState.routingCosts)
+        const cacheCost = input?.cacheSavings === undefined
+          ? singleCurrency(savingsState.cacheCosts)
+          : input.cacheSavings.cost
+        if (cacheCost !== null) costs.set(cacheCost.currency, (costs.get(cacheCost.currency) ?? 0) + cacheCost.amount)
+        return {
+          tokens: cacheTokens + savingsState.routingTokens,
+          cost: singleCurrency(costs),
+          cacheHits,
+          cacheBackend: input?.cacheBackend ?? 'memory',
+        }
+      })(),
       pool: input?.pool ?? { status: 'ok', source: 'model_pool.yaml' },
     }
   }
@@ -440,6 +539,7 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
     getMode,
     noteAgent,
     noteCacheHit,
+    noteUsage,
     snapshot,
     acquire: (provider, model, now) => {
       const key = modelKey(provider, model)

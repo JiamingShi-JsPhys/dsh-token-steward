@@ -22,6 +22,7 @@ function snapshot(overrides: Partial<MatrixSnapshot> = {}): MatrixSnapshot {
     totals: overrides.totals ?? {
       todayTokens: 0, todayCost: null, cacheHitRate: null, degradedRequests: 0, unpricedModels: 0,
     },
+    savings: overrides.savings ?? { tokens: 0, cost: null, cacheHits: 0, cacheBackend: 'off' },
     pool: overrides.pool ?? { status: 'ok', source: 'model_pool.yaml' },
   }
 }
@@ -116,6 +117,15 @@ function fakeClient(): {
       },
       async discoverModels() {
         return { data: [] }
+      },
+      async importHarness() {
+        return { ok: true, imported: [] }
+      },
+      async syncHarness() {
+        return { ok: true }
+      },
+      async deleteVendor() {
+        return { ok: true }
       },
     },
   }

@@ -14,12 +14,13 @@ import type { CapabilityTag, DimensionKey, InputModality, RouteIntent, RoutingMo
 /** 虚拟模型 id 的前缀。 */
 export const VIRTUAL_PREFIX = 'steward:'
 
-/** 三个模式虚拟 id。 */
+/** 四个模式虚拟 id。 */
 export const MODE_IDS: Record<string, RoutingMode> = {
   'steward:auto': 'frugal',
   'steward:frugal': 'frugal',
   'steward:balanced': 'balanced',
   'steward:max_power': 'max_power',
+  'steward:free': 'free',
 }
 
 /** 一段文本的粗略 token 估算：4 字符 ≈ 1 token。 */
@@ -30,6 +31,48 @@ const IMAGE_TOKEN_COST = 1_000
 
 /** 一条 message 的结构开销（role 字段等）。 */
 const MESSAGE_OVERHEAD_TOKENS = 4
+
+/**
+ * 友好的模型写法 → 虚拟 id。
+ *
+ * 宿主会把模型 id 原样塞进 persona（「powered by the {{model}} model」），
+ * 于是 `steward:auto` 会被模型自己念出来。让配置里直接写 `Steward Auto`
+ * 这类人话，这里再做一次归一（忽略大小写与所有分隔符）。
+ */
+const FRIENDLY_IDS: Record<string, string> = {
+  stewardauto: 'steward:auto',
+  stewardfrugal: 'steward:frugal',
+  stewardbalanced: 'steward:balanced',
+  stewardmaxpower: 'steward:max_power',
+  stewardfree: 'steward:free',
+}
+
+/**
+ * 中文写法 → 虚拟 id。
+ *
+ * 模型选择界面要给人看中文，可配置里写的 id 会原样发给网关，
+ * 所以「管家·自动」这种写法必须在这里认出是同一条路由。
+ * 名称与面板上的调度模式一致：极致便宜 / 效率优先 / 最强火力。
+ */
+const CHINESE_IDS: Record<string, string> = {
+  管家自动: 'steward:auto',
+  管家极致便宜: 'steward:frugal',
+  管家效率优先: 'steward:balanced',
+  管家最强火力: 'steward:max_power',
+  管家白嫖: 'steward:free',
+  管家白嫖模式: 'steward:free',
+}
+
+/** 把 `管家·自动` / `Steward Auto` / `steward:auto` 统一成虚拟 id；其余原样返回。 */
+export function canonicalModelId(modelId: string): string {
+  const trimmed = modelId.trim()
+  // 中文名只去掉分隔符（· ・ - _ . / 和空白），保留汉字本身。
+  const chinese = trimmed.replace(/[\s·・\-_./]+/g, '')
+  const named = CHINESE_IDS[chinese]
+  if (named !== undefined) return named
+  const key = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  return FRIENDLY_IDS[key] ?? trimmed
+}
 
 /** 解析出的虚拟路由意图。 */
 export interface VirtualRoute {
@@ -50,7 +93,8 @@ export interface VirtualRoute {
  *   steward:alias/<name>
  *   其他任意 id → 直通（作为 provider/model 无法确定，交由网关查表）
  */
-export function parseVirtualModel(modelId: string): VirtualRoute {
+export function parseVirtualModel(rawModelId: string): VirtualRoute {
+  const modelId = canonicalModelId(rawModelId)
   if (!modelId.startsWith(VIRTUAL_PREFIX)) return { virtual: '' }
   const rest = modelId.slice(VIRTUAL_PREFIX.length)
   const mode = MODE_IDS[modelId]

@@ -1,8 +1,13 @@
 /**
- * 单模型卡：能力标签、健康状态、并发、延迟、今日用量与成本。
+ * 单模型卡（极简调试风）。
  *
- * 状态用 data-health 表达而不是类名切换，因此皮肤可以按状态配色，
- * 而本组件不需要知道皮肤的存在。
+ * 悬浮面板是「看一眼现在怎么样」的地方，不是报表：只保留
+ *  - 模型名（过长省略号）
+ *  - 一枚关键标签：目录评级 [SSS] / [UNRATED] / [NO-CHAT]
+ *  - 健康状态点（data-health 配色由皮肤决定）
+ *
+ * 并发、延迟、今日用量、花费、缓存明细一律不在这里展开——面板只有两列、
+ * 每张卡两行，扫读成本最低。需要细节时去设置页看模型矩阵。
  */
 import type { ReactNode } from 'react'
 import type { ModelCardView } from '../../core/types.ts'
@@ -20,62 +25,24 @@ export interface ModelCardProps {
 /** 一张模型卡。 */
 export function ModelCard(props: ModelCardProps): ReactNode {
   const face = modelCardFace(props.card, props.now)
+  const tier = props.card.tier ?? ''
+  const badge = tier !== '' && tier !== 'NA'
+    ? '[' + tier + ']'
+    : props.card.chat === false ? '[NO-CHAT]' : '[UNRATED]'
   return (
     <article
       className={css.card}
       data-dsh-part="model-card"
       data-health={face.health}
       data-unpriced={face.unpriced ? 'true' : 'false'}
+      data-tier={tier === '' ? 'NA' : tier}
     >
-      <div className={css.cardHead}>
-        <span className={css.cardName} title={face.provider + ' / ' + face.model}>{face.displayName}</span>
+      <div className={css.cardTop}>
+        <div className={css.cardHeading}>
+          <span className={css.cardName} title={face.provider + ' / ' + face.model}>{face.displayName}</span>
+          <span className={css.cardProvider} data-minimal="true">{badge}</span>
+        </div>
         <span className={css.statusDot} aria-hidden="true" />
-      </div>
-
-      {props.card.dimensions !== undefined ? (
-        <div className={css.dimRow} data-dsh-part="dimensions">
-          <span className={css.dimBox}>R: {props.card.dimensions.reasoning.score}</span>
-          <span className={css.dimBox}>L: {props.card.dimensions.longContext.score}</span>
-          <span className={css.dimBox}>C: {props.card.dimensions.coding.score}</span>
-          <span className={css.dimBox}>A: {props.card.dimensions.agentic.score}</span>
-          <span className={css.dimBox}>P: {props.card.dimensions.proWork.score}</span>
-          <span className={css.dimBox}>F: {props.card.dimensions.factuality.score}</span>
-        </div>
-      ) : null}
-
-      <div className={css.chips}>
-        <span className={css.chip} data-part="cost-level">{face.costLevelLabel}</span>
-        {face.capabilities.map((capability) => (
-          <span key={capability} className={css.chip}>{capability}</span>
-        ))}
-        {face.imageInput ? <span className={css.chip}>{props.t('models.imageInput')}</span> : null}
-        {face.imageOutput ? <span className={css.chip}>{props.t('models.imageOutput')}</span> : null}
-        {face.videoOutput ? <span className={css.chip}>{props.t('models.videoOutput')}</span> : null}
-        {face.unpriced ? <span className={css.chip} data-unpriced="true">{props.t('models.unpriced')}</span> : null}
-      </div>
-
-      {face.strengthTags !== undefined && face.strengthTags.length > 0 ? (
-        <div className={css.chips}>
-          {face.strengthTags.map((tag) => <span key={tag} className={css.chip}>{tag}</span>)}
-        </div>
-      ) : null}
-
-      <div className={css.cardStats}>
-        <span className={css.statLabel}>{props.t('models.inflight')}</span>
-        <span>{face.inFlightText}</span>
-        <span className={css.statLabel}>{props.t('models.latency')}</span>
-        <span>{face.latencyText}</span>
-        <span className={css.statLabel}>{props.t('models.tokens')}</span>
-        <span>{face.tokensText}</span>
-        <span className={css.statLabel}>{props.t('models.cost')}</span>
-        <span>{face.costText}</span>
-        <span className={css.statLabel}>{props.t('models.cache')}</span>
-        <span>{face.cacheText}</span>
-      </div>
-
-      <div className={css.chips}>
-        <span className={css.chip}>{face.healthLabel}</span>
-        {face.resumeIn === undefined ? null : <span className={css.chip}>{face.resumeIn}</span>}
       </div>
     </article>
   )

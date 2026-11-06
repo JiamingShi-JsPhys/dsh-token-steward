@@ -11,6 +11,8 @@ import {
   agentRows,
   ballBadge,
   bannerOf,
+  geekTags,
+  windowTag,
   groupByCost,
   headline,
   modelCardFace,
@@ -35,6 +37,12 @@ function card(overrides: Partial<ModelCardView> = {}): ModelCardView {
     cacheHitRate: overrides.cacheHitRate === undefined ? null : overrides.cacheHitRate,
     ...(overrides.resumeAt === undefined ? {} : { resumeAt: overrides.resumeAt }),
     ...(overrides.latencyMs === undefined ? {} : { latencyMs: overrides.latencyMs }),
+    ...(overrides.tier === undefined ? {} : { tier: overrides.tier }),
+    ...(overrides.dimensions === undefined ? {} : { dimensions: overrides.dimensions }),
+    ...(overrides.imageInput === undefined ? {} : { imageInput: overrides.imageInput }),
+    ...(overrides.imageOutput === undefined ? {} : { imageOutput: overrides.imageOutput }),
+    ...(overrides.videoOutput === undefined ? {} : { videoOutput: overrides.videoOutput }),
+    ...(overrides.chat === undefined ? {} : { chat: overrides.chat }),
   }
 }
 
@@ -54,6 +62,7 @@ function snapshot(overrides: Partial<MatrixSnapshot> = {}): MatrixSnapshot {
       degradedRequests: 0,
       unpricedModels: 0,
     },
+    savings: overrides.savings ?? { tokens: 0, cost: null, cacheHits: 0, cacheBackend: 'off' },
     pool: overrides.pool ?? { status: 'ok', source: 'model_pool.yaml' },
   }
 }
@@ -96,12 +105,12 @@ test('headline 在没有未定价时不给 costNote', () => {
 
 /* ────────────────────────── 模式 ────────────────────────── */
 
-test('modeOptions 固定三个选项且恰好一个 active', () => {
+test('modeOptions 固定四个选项且恰好一个 active', () => {
   const options = modeOptions(snapshot({ mode: 'balanced' }))
-  assert.equal(options.length, 3)
+  assert.equal(options.length, 4)
   assert.equal(options.filter((option) => option.active).length, 1)
   assert.equal(options.find((option) => option.active)?.mode, 'balanced')
-  assert.deepEqual(options.map((option) => option.mode), ['frugal', 'balanced', 'max_power'])
+  assert.deepEqual(options.map((option) => option.mode), ['frugal', 'balanced', 'max_power', 'free'])
 })
 
 test('modeOptions 每个按钮都有解释文案', () => {
@@ -260,15 +269,113 @@ test('bannerOf 在一切正常时不挂横幅', () => {
   assert.equal(bannerOf(snapshot()), undefined)
 })
 
-test('ballBadge 优先显示花费，未定价时退回 token 数', () => {
+test('ballBadge 显示今日已省：优先金额，未定价时退回 token 数', () => {
   assert.equal(ballBadge(snapshot({
-    totals: { todayTokens: 1_000, todayCost: { currency: 'CNY', amount: 3 }, cacheHitRate: null, degradedRequests: 0, unpricedModels: 0 },
-  })), '¥3.00')
+    savings: { tokens: 1_000, cost: { currency: 'USD', amount: 3 }, cacheHits: 2, cacheBackend: 'sqlite' },
+  })), '$3.00')
   assert.equal(ballBadge(snapshot({
-    totals: { todayTokens: 1_500, todayCost: null, cacheHitRate: null, degradedRequests: 0, unpricedModels: 1 },
+    savings: { tokens: 1_500, cost: null, cacheHits: 1, cacheBackend: 'memory' },
   })), '1.5K')
+  assert.equal(ballBadge(snapshot({
+    savings: { tokens: 0, cost: null, cacheHits: 0, cacheBackend: 'off' },
+  })), '0')
 })
 
-test('ballBadge 在计量不可用时是破折号', () => {
-  assert.equal(ballBadge(snapshot({ usageAvailable: false })), '—')
+
+/* ────────────────────────── 极客标签 ────────────────────────── */
+
+test('geekTags：大写纯文字 + 方括号，形态是 [REASONING: SSS] / [VISION] / [200K]', () => {
+  const tags = geekTags(card({
+    tier: 'SSS',
+    contextWindow: 200_000,
+    capabilities: ['coding', 'reasoning', 'vision', 'tool-use'],
+    dimensions: {
+      reasoning: { score: 79, grade: 'SSS' },
+      longContext: { score: 56, grade: 'SS' },
+      coding: { score: 80, grade: 'SSS' },
+      agentic: { score: 85, grade: 'SSS' },
+      proWork: { score: 64, grade: 'S' },
+      factuality: { score: 73, grade: 'SSS' },
+    },
+  }))
+  assert.ok(tags.includes('[TIER: SSS]'))
+  assert.ok(tags.includes('[REASONING: SSS]'))
+  assert.ok(tags.includes('[CODING: SSS]'))
+  assert.ok(tags.includes('[PRO-WORK: S]'))
+  assert.ok(tags.includes('[VISION]'))
+  assert.ok(tags.includes('[TOOL-USE]'))
+  assert.ok(tags.includes('[200K]'))
+  for (const tag of tags) {
+    assert.match(tag, /^\[[A-Z0-9: .+-]+\]$/, '标签必须是大写纯文字方括号：' + tag)
+  }
+})
+
+test('geekTags：没有 Emoji，也不输出小写裸词', () => {
+  const tags = geekTags(card({ capabilities: ['coding', 'reasoning', 'long-context'] }))
+  const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
+  for (const tag of tags) {
+    assert.ok(!emoji.test(tag), '能力标签不允许 Emoji：' + tag)
+    assert.equal(tag, tag.toUpperCase(), '能力标签必须大写：' + tag)
+  }
+  assert.ok(tags.includes('[LONG-CONTEXT]'))
+})
+
+test('windowTag：128K / 200K / 1M 的写法', () => {
+  assert.equal(windowTag(128_000), '128K')
+  assert.equal(windowTag(200_000), '200K')
+  assert.equal(windowTag(1_000_000), '1M')
+  assert.equal(windowTag(2_000_000), '2M')
+  assert.equal(windowTag(0), '?')
+})
+
+test('geekTags：未评级（NA）不冒充事实，改印一枚 [UNRATED]', () => {
+  const unknown = geekTags(card({
+    tier: 'NA',
+    dimensions: {
+      reasoning: { score: 50, grade: 'NA' },
+      longContext: { score: 50, grade: 'NA' },
+      coding: { score: 50, grade: 'NA' },
+      agentic: { score: 50, grade: 'NA' },
+      proWork: { score: 50, grade: 'NA' },
+      factuality: { score: 50, grade: 'NA' },
+    },
+  }))
+  assert.ok(unknown.includes('[UNRATED]'))
+  assert.ok(!unknown.some((tag) => tag.includes(': NA]')), '不允许出现 [X: NA]')
+  assert.ok(!unknown.some((tag) => tag === '[TIER: NA]'))
+
+  // 只有部分维度未知时：已知的照常印，不补 UNRATED。
+  const partial = geekTags(card({
+    tier: 'SSS',
+    dimensions: {
+      reasoning: { score: 79, grade: 'SSS' },
+      longContext: { score: 50, grade: 'NA' },
+      coding: { score: 80, grade: 'SSS' },
+      agentic: { score: 85, grade: 'SSS' },
+      proWork: { score: 64, grade: 'S' },
+      factuality: { score: 73, grade: 'SSS' },
+    },
+  }))
+  assert.ok(partial.includes('[REASONING: SSS]'))
+  assert.ok(!partial.includes('[LONG-CONTEXT: NA]'))
+  assert.ok(!partial.includes('[UNRATED]'))
+})
+
+test('geekTags：向量 / 重排模型挂 [NO-CHAT]，说明它不进对话路由', () => {
+  assert.ok(geekTags(card({ chat: false })).includes('[NO-CHAT]'))
+  assert.ok(!geekTags(card({})).includes('[NO-CHAT]'))
+})
+
+test('headline：上游没有缓存信息时，用本地缓存的真实命中次数兜底', () => {
+  const snap = snapshot({
+    totals: { todayTokens: 0, todayCost: null, cacheHitRate: null, degradedRequests: 0, unpricedModels: 0 },
+    savings: { tokens: 78, cost: null, cacheHits: 2, cacheBackend: 'sqlite' },
+  })
+  assert.equal(headline(snap).cache, '2 次')
+  // 一次都没命中且上游也没数字：仍然是破折号，不冒充 0。
+  const empty = snapshot({
+    totals: { todayTokens: 0, todayCost: null, cacheHitRate: null, degradedRequests: 0, unpricedModels: 0 },
+    savings: { tokens: 0, cost: null, cacheHits: 0, cacheBackend: 'sqlite' },
+  })
+  assert.equal(headline(empty).cache, '—')
 })

@@ -7,6 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRouter, filterReason, modelKey } from '../src/core/router.ts'
+import { canonicalModelId, parseVirtualModel } from '../src/core/intent.ts'
 import { intent, matrix, model, provider } from './fixtures.ts'
 import type { AttemptResult, PoolConfig } from '../src/core/types.ts'
 
@@ -37,6 +38,13 @@ test('filterReason：缺少能力标签即淘汰', () => {
   assert.equal(filterReason(entry, intent({ requiredCapabilities: ['coding'] })), undefined)
 })
 
+test('filterReason：向量 / 重排模型永远不作对话候选', () => {
+  const embedding = { ...model({ id: 'qwen-embedding-8b', capabilities: ['coding'] }), chat: false }
+  assert.equal(filterReason(embedding, intent()), 'not-a-chat-model')
+  // 其余模型不受影响。
+  assert.equal(filterReason(model({ id: 'qwen' }), intent()), undefined)
+})
+
 test('filterReason：缺少输入模态即淘汰', () => {
   const entry = model({ id: 'm', input_modalities: ['text'] })
   assert.equal(filterReason(entry, intent({ requiredModalities: ['image'] })), 'missing-modality:image')
@@ -47,11 +55,18 @@ test('filterReason：带 tools 的请求隐式要求 tool-use', () => {
   assert.equal(filterReason(entry, intent({ needsTools: true })), 'missing-capability:tool-use')
 })
 
-test('filterReason：窗口放不下输入加输出即淘汰', () => {
+test('filterReason：窗口只按输入卡，max_tokens 要得再大也不淘汰', () => {
   const entry = model({ id: 'm', context_window: 32_000 })
+  // 输入 30k 放得下：客户端张口要 8k 输出也照收——输出量由网关按剩余窗口压，
+  // 拿「输入 + 期望输出」当硬门槛会把 DSH 这种动辄要 64k 的客户端全挡死。
   assert.equal(
     filterReason(entry, intent({ estimatedInputTokens: 30_000, expectedOutputTokens: 8_000 })),
-    'window-too-small:32000<38000',
+    undefined,
+  )
+  // 输入本身就放不下：仍然淘汰。
+  assert.equal(
+    filterReason(entry, intent({ estimatedInputTokens: 40_000, expectedOutputTokens: 8_000 })),
+    'window-too-small:32000<40256',
   )
 })
 
@@ -282,6 +297,10 @@ test('setMode 切换后 plan 立刻按新模式决策', () => {
 
 test('balanced 模式在 burst 内把四个并发摊到四个不同模型', () => {
   const config = matrix()
+  // Balanced 先过 A 门槛：让四个候选都达标，测的才是打散本身。
+  for (const provider of config.providers) {
+    for (const model of provider.models) model.quality_rank = Math.max(model.quality_rank, 70)
+  }
   const router = createRouter(config, { maxAttempts: 1 }, 'balanced')
   const picks: string[] = []
   for (let index = 0; index < 4; index += 1) {
@@ -481,4 +500,108 @@ test('同一模型 max_concurrency=2 时两个并发都能进去，第三个溢�
   assert.ok(third.ok)
   if (!third.ok) return
   assert.equal(third.decision.chosen.model, 'b1')
+})
+
+/* ────────────────────────── 今日已省 ────────────────────────── */
+
+test('快照记今日已省：缓存命中与降配选路分开累计，同币种合并', () => {
+  const config: PoolConfig = {
+    version: 1,
+    defaults: matrix().defaults,
+    routing: matrix().routing,
+    providers: [
+      provider('premium', [model({
+        id: 'baseline',
+        quality_rank: 100,
+        pricing: { currency: 'USD', input_per_mtok: 10, output_per_mtok: 40 },
+      })]),
+      provider('cheap', [model({
+        id: 'cheap',
+        quality_rank: 50,
+        pricing: { currency: 'USD', input_per_mtok: 1, output_per_mtok: 4 },
+      })]),
+    ],
+  }
+  const router = createRouter(config)
+  router.noteCacheHit('r1', 'cheap', 'cheap', 1_000, { tokens: 1_000, cost: { currency: 'USD', amount: 0.5 } })
+  router.noteUsage('cheap', 'cheap', {
+    input: 1_000_000, output: 1_000_000, cacheRead: 0, cacheWrite: 0, reasoning: 0,
+  }, 2_000)
+  const savings = router.snapshot(3_000).savings
+  assert.equal(savings.tokens, 1_000 + 2_000_000)
+  assert.deepEqual(savings.cost, { currency: 'USD', amount: 45.5 }, '缓存 0.5 + 降配 45')
+  assert.equal(savings.cacheHits, 1)
+})
+
+test('节省混币时不给总额，绝不把 USD 与 CNY 相加', () => {
+  const router = createRouter(matrix())
+  router.noteCacheHit('r1', 'a', 'a', 1_000, { tokens: 10, cost: { currency: 'USD', amount: 1 } })
+  router.noteCacheHit('r2', 'b', 'b', 1_100, { tokens: 10, cost: { currency: 'CNY', amount: 2 } })
+  assert.equal(router.snapshot(2_000).savings.cost, null)
+})
+
+test('快照可用持久层的今日节省覆盖进程内累计，并报告缓存后端', () => {
+  const router = createRouter(matrix())
+  router.noteCacheHit('r1', 'a', 'a', 1_000, { tokens: 10, cost: { currency: 'USD', amount: 1 } })
+  const snapshot = router.snapshot(2_000, {
+    cacheBackend: 'sqlite',
+    cacheSavings: { tokens: 9_000, cost: { currency: 'USD', amount: 7 }, cacheHits: 12 },
+  })
+  assert.equal(snapshot.savings.tokens, 9_000)
+  assert.deepEqual(snapshot.savings.cost, { currency: 'USD', amount: 7 })
+  assert.equal(snapshot.savings.cacheHits, 12)
+  assert.equal(snapshot.savings.cacheBackend, 'sqlite')
+})
+
+test('友好的模型写法归一：Steward Auto → steward:auto', () => {
+  // 模型选择界面写中文：配置里的 id 原样发给网关，这里必须认出同一条路由。
+  assert.equal(canonicalModelId('管家·自动'), 'steward:auto')
+  assert.equal(canonicalModelId('管家极致便宜'), 'steward:frugal')
+  assert.equal(canonicalModelId('管家·效率优先'), 'steward:balanced')
+  assert.equal(canonicalModelId('管家 · 最强火力'), 'steward:max_power')
+  assert.equal(canonicalModelId('Steward Auto'), 'steward:auto')
+  assert.equal(canonicalModelId('steward_auto'), 'steward:auto')
+  assert.equal(canonicalModelId('STEWARD-MAX-POWER'), 'steward:max_power')
+  // 不是虚拟 id 的原样返回，绝不误伤真实模型名。
+  assert.equal(canonicalModelId('qwen3-embedding-8b'), 'qwen3-embedding-8b')
+  const route = parseVirtualModel('Steward Auto')
+  assert.equal(route.virtual, 'steward:auto')
+  assert.equal(route.mode, undefined)
+})
+
+test('白嫖模式：付费模型直接不参与，不是「排后面」', () => {
+  const config: PoolConfig = {
+    ...matrix(),
+    providers: [
+      provider('relay', [
+        model({ id: 'paid', cost_level: 'high', costPer1kOutput: 0.02, quality_rank: 99 }),
+        model({ id: 'free-small', cost_level: 'free', costPer1kOutput: 0, quality_rank: 40 }),
+      ]),
+    ],
+  }
+  const router = createRouter(config, undefined, 'free')
+  const result = router.plan(intent(), 1_000, 'r1')
+  assert.ok(result.ok, 'expected a decision')
+  // 质量再高，只要不是零成本就不许上——这个模式的承诺是绝不偷偷花钱。
+  assert.equal(result.decision.chosen.provider, 'relay')
+  assert.equal(result.decision.chosen.model, 'free-small')
+})
+
+test('白嫖模式：池子里没有零成本模型时如实拒绝，不退化成付费', () => {
+  const config: PoolConfig = {
+    ...matrix(),
+    providers: [provider('relay', [model({ id: 'paid', costPer1kOutput: 0.02 })])],
+  }
+  const router = createRouter(config, undefined, 'free')
+  const result = router.plan(intent(), 1_000, 'r1')
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.ok(result.refusal.rejected.some((entry) => entry.reason === 'not-free'), JSON.stringify(result.refusal))
+  }
+})
+
+test('管家·白嫖 的中文写法能认出来，并且落到 free 模式', () => {
+  assert.equal(canonicalModelId('管家·白嫖'), 'steward:free')
+  const parsed = parseVirtualModel('管家·白嫖')
+  assert.equal(parsed?.mode, 'free')
 })

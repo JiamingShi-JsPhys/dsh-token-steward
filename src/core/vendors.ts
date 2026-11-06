@@ -24,6 +24,7 @@ import {
   matchTemplateModel,
   templateModelToInfo,
   unknownModelInfo,
+  findModelProfile,
   PROVIDER_TEMPLATES,
   type TemplateVendor,
 } from './provider-templates.ts'
@@ -51,13 +52,14 @@ export function modelInfoToEntry(info: ModelInfo): ModelEntry {
   // 引擎的 capabilities 只认识已知标签；目录里的 image_gen 等展示型标签不参与硬过滤。
   const KNOWN: readonly CapabilityTag[] = ['coding', 'reasoning', 'vision', 'fast', 'tool-use', 'long-context', 'json-mode', 'multilingual']
   const capabilities = info.capabilities.filter((tag: string): tag is CapabilityTag => (KNOWN as readonly string[]).includes(tag))
-  const priced = info.costPer1kOutput !== null || info.costPer1kInput !== null
+  const price = info.price ?? null
+  const priced = price !== null
   return {
     id: info.id,
     display_name: info.name,
     capabilities,
     // legacy 档位只在六维成本缺失时被 scorer 回退使用：未定价取中性 medium。
-    cost_level: priced ? costLevelOf(info.costPer1kOutput ?? info.costPer1kInput) : 'medium',
+    cost_level: priced ? costLevelOf(price.output / 1_000) : 'medium',
     context_window: info.contextWindow,
     max_output_tokens: 8_192,
     availability: 'direct',
@@ -67,14 +69,22 @@ export function modelInfoToEntry(info: ModelInfo): ModelEntry {
     tags: { tier: info.tier },
     tier: info.tier,
     dimensions: { ...scores } as DimensionSet,
-    costPer1kInput: info.costPer1kInput,
-    costPer1kOutput: info.costPer1kOutput,
+    costPer1kInput: priced ? price.input / 1_000 : null,
+    costPer1kOutput: priced ? price.output / 1_000 : null,
+    ...(priced ? { pricing: { currency: 'USD', input_per_mtok: price.input, output_per_mtok: price.output } } : {}),
     ...(info.strengths !== undefined ? { strengths: info.strengths } : {}),
     ...(info.strengthTags !== undefined ? { strengthTags: [...info.strengthTags] } : {}),
     ...(info.imageInput === true ? { imageInput: true } : {}),
     ...(info.imageOutput === true ? { imageOutput: true } : {}),
     ...(info.videoOutput === true ? { videoOutput: true } : {}),
+    // 向量 / 重排模型不进对话路由：中转站的模型列表里它们和聊天模型长得一样。
+    ...(looksLikeNonChat(info.id) ? { chat: false } : {}),
   }
+}
+
+/** 名字一看就知道不是对话模型：embedding / rerank。 */
+export function looksLikeNonChat(id: string): boolean {
+  return /embed|rerank/i.test(id)
 }
 
 /** 每千 token 输出价 → legacy 成本档位（仅作展示与回退，六维成本才是主序）。 */
@@ -94,7 +104,11 @@ export function vendorIsRoutable(vendor: VendorConfig): boolean {
 
 /** 展开一家厂商的最终 Base URL。 */
 export function vendorEndpoint(vendor: VendorConfig): string {
-  return vendor.customUrl !== '' ? vendor.customUrl : vendor.officialUrl
+  const official = (vendor.officialUrl ?? '').trim()
+  const relay = (vendor.customUrl ?? '').trim()
+  const source = vendor.endpointSource ?? (relay !== '' ? 'relay' : 'official')
+  if (source === 'relay') return relay !== '' ? relay : official
+  return official !== '' ? official : relay
 }
 
 /**
@@ -109,13 +123,38 @@ export function synthesizePool(vendors: VendorConfig[], mode: PoolConfig['routin
     const models = vendor.enabledModels
       .map((modelId) => {
         const known = template !== undefined ? matchTemplateModel(template, modelId) : undefined
-        const base = template !== undefined && known !== undefined ? templateModelToInfo(template, known) : unknownModelInfo(modelId)
+        // 这家没被收录（自定义 / 中转站）时，再到全域目录里找一遍：
+        // 内置的强度与擅长标签跟接入线路无关，能对上就该沿用。
+        const elsewhere = known === undefined ? findModelProfile(modelId) : undefined
+        // 目录只提供元数据（名称 / 评级 / 价目）；**id 必须用用户配置的原始写法**，
+        // 因为它是真正发给上游的那个字符串。目录里的规范化 id（agnes-3-0-flash）
+        // 和上游真实 id（agnes-3.0-flash）并不总是同一个，替换过去就是 400。
+        const catalogued = template !== undefined && known !== undefined
+          ? { ...templateModelToInfo(template, known), id: modelId }
+          : elsewhere !== undefined
+            ? { ...templateModelToInfo(elsewhere.vendor, elsewhere.model), id: modelId }
+            : unknownModelInfo(modelId)
+        // 用户在面板里覆盖的价目优先于目录估算价。
+        const override = vendor.modelPricing?.[modelId]
+        const base = override === undefined ? catalogued : { ...catalogued, price: { ...override } }
         // 用户在面板里给模型打的标签：与目录标签合并（去重），AI 调控可读。
         const userTags = vendor.modelTags?.[modelId]
         const info: ModelInfo = userTags !== undefined && userTags.length > 0
           ? { ...base, strengthTags: [...(base.strengthTags ?? []), ...userTags.filter((tag) => !(base.strengthTags ?? []).includes(tag))] }
           : base
-        return modelInfoToEntry(info)
+        const entry = modelInfoToEntry(info)
+        // 目录里没有价目的型号，按两条线索推定零成本，让它进得了白嫖：
+        //  - 自定义厂家（目录里根本没有这家）：用户是手动勾进来的，白嫖就该认它；
+        //  - 型号名里就写着 free（`…-free`）：上游自己标的免费额度，目录没跟上而已。
+        // 只推定 cost_level，不编价目——成本看板照旧记「未定价」。
+        // 用户给了价目（哪怕覆盖成 0）就按用户的走，这条不再生效。
+        const unpriced = entry.costPer1kInput === null && entry.costPer1kOutput === null
+        const namedFree = /(^|[-_.])free$/i.test(modelId)
+        if (unpriced && (template === undefined || namedFree)) {
+          entry.cost_level = 'free'
+          entry.freeAssumed = true
+        }
+        return entry
       })
     if (models.length === 0) continue
     providers.push({

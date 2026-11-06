@@ -72,13 +72,14 @@ test('formatRemaining 对已到期返回 undefined', () => {
   assert.equal(formatRemaining(400, 0), '<1s')
 })
 
-test('三个模式都有标签与解释，且顺序固定', () => {
-  assert.deepEqual(MODE_ORDER, ['frugal', 'balanced', 'max_power'])
+test('四个模式都有标签与解释，且顺序固定', () => {
+  assert.deepEqual(MODE_ORDER, ['frugal', 'balanced', 'max_power', 'free'])
   for (const mode of MODE_ORDER) {
     assert.ok(MODE_LABEL[mode].length > 0)
     assert.ok(MODE_HINT[mode].length > 0)
   }
   assert.equal(MODE_LABEL.frugal, '极致便宜')
+  assert.equal(MODE_LABEL.free, '白嫖模式')
 })
 
 test('五种健康状态都有中文标签', () => {

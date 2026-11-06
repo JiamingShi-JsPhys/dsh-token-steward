@@ -1,6 +1,56 @@
 # Changelog
 
+
 ## 1.0.0 — 2026-11-06
+
+### 终极整合（同日，仍为 1.0.0）
+
+「终极整合」：在 1.0 的网关/降级/健康骨架上，把成本、缓存、三模式语义与面板交互
+按产品规格重做。
+
+### 路由三连修（真机复现后）
+- **模型 id 不再被目录改写**：合成池只从目录取元数据，`id` 始终用用户配置的原始写法。
+  之前 `agnes-3.0-flash` 被写成目录里的 `agnes-3-0-flash`，上游直接
+  `model_not_found`，只能靠降级兜住（每次白等 15s）。
+- **出站 `max_tokens` 压到 65536**：客户端会发远超上游能力的值，Agnes 直接 400
+  `max_tokens 不能超过 65536`；现在统一压到 65536，正常请求不受影响。
+- **新会话默认模型 = `Steward Auto`**：profile 里 `agent-default-model` 改指
+  `steward / steward:auto`，选了 Agent 模式就不必再手选模型。
+
+### 对话路由的硬修正
+- 中转站 `/v1/models` 会把向量与重排模型一起列出来。合成池按 id 识别（embed / rerank）
+  并标 `chat: false`，引擎以 `not-a-chat-model` 把它们挡在对话路由之外，面板挂 `[NO-CHAT]`；
+- 「缓存命中」卡在上游不给 usage 缓存信息时，退回**本地缓存的真实命中次数**，不再显示 `—`。
+
+### 价格层（新）
+- 目录 36 个模型补齐 **榜单估算价**（USD / 1M tokens），标注为估算、可在面板逐模型覆盖；
+- `VendorConfig.modelPricing` 与 `vendors.json` 往返（修复 `modelTags` 同一处被丢弃的 bug）；
+- `src/core/pricing.ts`：未定价 = null、混币不相加、节省不为负。
+
+### 三模式语义（重写）
+- **Max Power**：六维**总和**最高，Tier 破平；不再只看主维度；
+- **Balanced**：任务主维度 **A/A+ 门槛**先于价格，门内质量 0.6 + 成本 0.4，burst 打散仍决定性；
+- **Frugal**：满足硬过滤的 **C/D 级**里最便宜；没有 C/D 才放宽（`FALLBACK:tier-widened`）。
+
+### SQLite 缓存（新）
+- `node:sqlite` + SHA-256 prompt 键，落 `$DSH_HOME/token-steward/cache.sqlite`，重启不丢；
+- 命中即 0 token、原样回放字节；TTL / 容量 / 今日命中统计；
+- 老宿主自动降级内存 LRU；默认开启，设置页可关。
+
+### 面板（终极整合）
+- 四个页签：成本看板 / 模型矩阵 / 路由日志 / 代理协作；
+- 悬浮球角标改为**今日已省**（缓存 + 降配），成本看板同步展示来源；
+- 极客标签统一为 `[TIER: SSS]` `[REASONING: A+]` `[VISION]` `[200K]` 大写等宽 1px 实线，无 Emoji；
+- 40×40 AI 娘头像（从用户提供的榜单 PDF 裁切，**每家厂商一张**、取该厂商排名最高的立绘），Tier 发光边框，
+  无图/加载失败回落字母几何；宿主新增 `api/token-steward/avatar?id=` 同源头像路由；
+- 设置页：官方 URL 只读行 + 中转站 Base URL Override 输入框；Anthropic 红字防封警告
+  固定在 API Key 正上方；模型勾选卡补价格覆盖；
+- 修复 `.ball[data-tone='efficiency']` 永不命中、`modelCardGrid` 等 5 个 CSS 类缺失。
+
+### 质量（终极整合）
+- 403 条断言全绿（新增价格 / SQLite / 头像 / 极客标签 / 新三模式 / 头像路由 / 重启持久化）；
+- `tsc --noEmit` 零错误；`npm run build` 正常产出。
+
 
 首个可发布版本（原名 dsh-umbra-budget，同版本内更名 **dsh-token-steward · Token 管家**）。
 架构基于 M0 探针对真实宿主（app.asar 182 MB）的实测结论：
@@ -27,7 +77,7 @@
 - 热重载：内容比对去抖（编辑器 save 序列不误报）；原子写（Windows rename EPERM 有界重试）；
 - 台账损坏隔离留档（`.corrupt-<ISO>`），从不删除用户数据。
 
-### 本地精确响应缓存（1.0.0 新增）
+### 本地精确响应缓存（初版，已被 SQLite 版取代）
 - `routing.cache.exact_match`（默认关闭）：trivial 同 prompt 在 TTL 内直接回放上次响应
   字节，不出站、不计费、不进健康状态机（不收假延迟样本）；
 - 键覆盖 prompt 定义性字段 + 虚拟 id + 生效模式 + 流式形状：换模式/换形状天然失效；

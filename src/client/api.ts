@@ -4,7 +4,7 @@
  * 只用同源相对路径：宿主把 GUI 挂在可能带前缀的位置，绝对路径会跑出这个前缀。
  * 每次调用都带超时——一个卡住的 host 不该把面板也拖住。
  */
-import type { MatrixSnapshot, RoutingMode } from '../core/types.ts'
+import type { ImportScope, MatrixSnapshot, ModelPrice, RoutingMode } from '../core/types.ts'
 
 /** 单次调用预算：与 dsh-usage 面板保持一致。 */
 export const PANEL_FETCH_TIMEOUT_MS = 10_000
@@ -23,9 +23,15 @@ export interface VendorView {
   vendorName: string
   officialUrl: string
   customUrl: string
+  /** 线路二选一：official（内置官网）或 relay（中转站）。 */
+  endpointSource?: 'official' | 'relay'
   hasKey: boolean
   apiKeyMasked: string
   enabledModels: string[]
+  /** 上次拉取到的模型清单快照（id + 显示名），重启后靠它还原卡片。 */
+  pulledModels?: Array<{ id: string, name: string }>
+  modelTags: Record<string, string[]>
+  modelPricing: Record<string, ModelPrice>
 }
 
 /** 厂家 Tab 的目录条目（来自静态模板，随 GET /vendors 一起下发）。 */
@@ -33,6 +39,8 @@ export interface CatalogVendor {
   vendorId: string
   vendorName: string
   officialUrl: string
+  /** 官网 / 控制台（去这家申请 key 的地方）。 */
+  homepage?: string
   models: Array<{ id: string, name: string, tier: string }>
 }
 
@@ -57,6 +65,13 @@ export interface PanelClient {
   saveVendors(mode: RoutingMode, vendors: unknown): Promise<{ ok: boolean, error?: string }>
   /** 探测上游真实模型列表（同源面板路由，宿主代理上游——浏览器跨源会被 CORS 拦）。 */
   discoverModels(params: { vendor?: string, baseUrl?: string, apiKey?: string }): Promise<{ data: DiscoveredModel[] }>
+  /** 从 DSH 现有 profile 抓取已经配好的上游；返回导入的厂家 id。
+   *  带 scope 时只抓地址/编号对上的那一家。 */
+  importHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }>
+  /** 反向同步：把这家厂家写回 DSH 的系统模型设置。 */
+  syncHarness(vendorId: string): Promise<{ ok: boolean, file?: string, models?: number, error?: string }>
+  /** 显式删除一家厂家。 */
+  deleteVendor(vendorId: string): Promise<{ ok: boolean, error?: string }>
 }
 
 /** fetch 的最小形状。 */
@@ -99,12 +114,41 @@ export function createPanelClient(fetchImpl?: FetchLike): PanelClient {
       return body
     },
     async discoverModels(params) {
+      // 宿主的 discover 路由认 vendorId；面板内部叫 vendor，这里做一次翻译。
       const body = await call<{ ok: boolean, data: DiscoveredModel[] }>('/discover', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(params),
+        body: JSON.stringify({
+          vendorId: params.vendor ?? '',
+          baseUrl: params.baseUrl ?? '',
+          apiKey: params.apiKey ?? '',
+        }),
       })
       return body
+    },
+    async importHarness(scope?: ImportScope) {
+      return await call<{ ok: boolean, imported: string[], error?: string }>('/import-harness', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          vendorId: scope?.vendorId ?? '',
+          baseUrl: scope?.baseUrl ?? '',
+        }),
+      })
+    },
+    async deleteVendor(vendorId) {
+      return await call<{ ok: boolean, error?: string }>('/delete-vendor', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ vendorId }),
+      })
+    },
+    async syncHarness(vendorId) {
+      return await call<{ ok: boolean, file?: string, models?: number, error?: string }>('/sync-harness', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ vendorId }),
+      })
     },
     async setMode(mode) {
       const body = await call<{ ok: boolean, mode: RoutingMode }>('/mode', {

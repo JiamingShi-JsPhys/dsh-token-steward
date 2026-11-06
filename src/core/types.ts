@@ -11,7 +11,7 @@
 /* ────────────────────────────── 基础枚举 ────────────────────────────── */
 
 /** 全局调度模式；UI 可在运行时切换，覆盖 YAML 的 routing.mode。 */
-export type RoutingMode = 'frugal' | 'balanced' | 'max_power'
+export type RoutingMode = 'frugal' | 'balanced' | 'max_power' | 'free'
 
 /** 成本档位；frugal 模式的主序。 */
 export type CostLevel = 'high' | 'medium' | 'low' | 'free'
@@ -57,6 +57,12 @@ export interface DimensionScore {
   grade: string
 }
 
+/** 一个模型的价目（每百万 token）。币种随价格一起携带，绝不混算。 */
+export interface ModelPrice {
+  input: number
+  output: number
+}
+
 /** 六维评分集合；六个键一个不能少（见 provider-templates 的 DIMENSION_KEYS）。 */
 export type DimensionSet = Record<DimensionKey, DimensionScore>
 
@@ -83,6 +89,8 @@ export interface ModelInfo {
   imageOutput?: boolean
   /** 视频输出（文生视频）。 */
   videoOutput?: boolean
+  /** 生效价目（目录估算或用户覆盖）；缺省 = 未定价。 */
+  price?: ModelPrice
 }
 
 /**
@@ -95,13 +103,42 @@ export interface VendorConfig {
   vendorName: string
   /** 目录里的官方 Base URL（Custom 厂商为用户所填）。 */
   officialUrl: string
-  /** 用户实际使用的 Base URL；空串表示就用 officialUrl。 */
+  /** 中转站 Base URL；只在 endpointSource='relay' 时有意义。 */
   customUrl: string
+  /**
+   * 这个厂商走哪条线：`official` 用内置官网地址，`relay` 用 customUrl。
+   *
+   * 二选一而不是「填了就用」——两行同时在场时，用户很容易以为两个都生效，
+   * 或者为了拉取模型把官网地址原样再敲一遍。缺省（老数据）按老规则回落。
+   */
+  endpointSource?: 'official' | 'relay'
   apiKey: string
   /** 用户勾选启用的模型 id（来自 /v1/models 拉取或手填）。 */
   enabledModels: string[]
+  /**
+   * 上次「拉取模型」的结果快照（id + 显示名）。
+   *
+   * 拉取是一次性的网络结果，重启就没了；不存下来的话，用户勾过的型号在面板里
+   * 只剩一串光秃秃的 id。这里只存清单，不改路由——路由只认 enabledModels。
+   */
+  pulledModels?: Array<{ id: string, name: string }>
   /** 用户给模型打的擅长标签（modelId → 标签数组），AI 调控可读。 */
   modelTags?: Record<string, string[]>
+  /** 用户覆盖的价目（modelId → 每百万 token），优先于目录估算价。 */
+  modelPricing?: Record<string, ModelPrice>
+}
+
+/**
+ * 「从 DSH 已有模型导入」的作用范围。
+ *
+ * 不给范围 = 把 profile 里所有上游整份搬过来（老行为，模型一多就成了灾难）；
+ * 给了就只搬对上的那一家：面板停在谁身上，就只拉谁。
+ */
+export interface ImportScope {
+  /** 面板当前停留的厂家 id（精确匹配 profile 里的 provider 键）。 */
+  vendorId?: string
+  /** 当前这家实际使用的地址；按它规范化后比对 profile 的 baseURL。 */
+  baseUrl?: string
 }
 
 /* ────────────────────────────── 配置层 ────────────────────────────── */
@@ -135,6 +172,14 @@ export interface ModelEntry {
   max_concurrency: number
   /** 每分钟请求上限（滑窗）；缺省不限。 */
   rpm?: number
+  /**
+   * 是否接受对话请求；缺省 true。
+   *
+   * 中转站的 /v1/models 会把向量与重排模型一起列出来，它们对
+   * `chat/completions` 毫无意义。合成池时按 id 识别并置 false，
+   * 引擎据此把它们挡在路由之外（仍留在池里可见、可手动改回）。
+   */
+  chat?: boolean
   /** 0-100 的能力分，legacy 模式的主序；六维评分存在时不再作为主序。 */
   quality_rank: number
   pricing?: PricingTable
@@ -146,6 +191,11 @@ export interface ModelEntry {
   dimensions?: DimensionSet
   costPer1kInput?: number | null
   costPer1kOutput?: number | null
+  /**
+   * 零成本是「推定」的：自定义厂家目录里没有，型号也就没有价目。
+   * 用户既然把它勾进来，白嫖模式就认它；成本看板仍按未定价记账，不编数字。
+   */
+  freeAssumed?: boolean
   strengths?: string
   strengthTags?: string[]
   imageInput?: boolean
@@ -380,6 +430,14 @@ export interface SnapshotInput {
   /** 计量来源是否可用；false 时面板显示「计量不可用」而不是 0。 */
   usageAvailable?: boolean
   pool?: { status: 'ok' | 'rejected' | 'loading'; source: string; error?: string }
+  /** 缓存后端（sqlite | memory | off），面板展示用。 */
+  cacheBackend?: string
+  /** 缓存持久层报的「今日」节省；缺省时用路由引擎的进程内累计。 */
+  cacheSavings?: {
+    tokens: number
+    cost: { currency: string, amount: number } | null
+    cacheHits: number
+  }
 }
 
 /** 路由引擎：plan 纯决策，report 只动内存状态，都不触碰网络与磁盘。 */
@@ -411,8 +469,12 @@ export interface ModelCardView {
   videoOutput?: boolean
   capabilities: CapabilityTag[]
   costLevel: CostLevel
+  /** 零成本是推定的（自定义厂家、没有目录价目），面板要如实标注。 */
+  freeAssumed?: boolean
   contextWindow: number
   availability: Availability
+  /** 只作展示：false 表示它是向量 / 重排模型，不参与对话路由。 */
+  chat?: boolean
   health: HealthState
   /** open / cooling 的恢复时刻。 */
   resumeAt?: number
@@ -459,6 +521,25 @@ export interface MatrixTotals {
   unpricedModels: number
 }
 
+/**
+ * 今日已省（面板角标与成本看板的数据源）。
+ *
+ * 两个来源，分开记、相加时先看币种：
+ *  - cache：命中本地响应缓存，没有出站、没有计费；
+ *  - routing：选了比「六维总和最高的基准模型」更便宜的模型。
+ * 未定价的调用不产生金额，只累计省下的 token 数。
+ */
+export interface SavingsView {
+  /** 缓存命中省下的 token。 */
+  tokens: number
+  /** 省下的金额；混币或全部未定价时为 null，面板显示 —。 */
+  cost: { currency: string; amount: number } | null
+  /** 今日缓存命中次数。 */
+  cacheHits: number
+  /** 缓存后端：sqlite | memory | off。 */
+  cacheBackend: string
+}
+
 /** 面板一次轮询拿到的完整快照。 */
 export interface MatrixSnapshot {
   /** 单调递增；客户端靠它丢弃乱序响应。 */
@@ -471,6 +552,8 @@ export interface MatrixSnapshot {
   /** 最近 N 条路由事件，新的在后。 */
   recent: RouteEventView[]
   totals: MatrixTotals
+  /** 今日已省（缓存 + 路由）；没有数据时是 0 token / null 金额。 */
+  savings: SavingsView
   pool: { status: 'ok' | 'rejected' | 'loading'; source: string; error?: string }
 }
 

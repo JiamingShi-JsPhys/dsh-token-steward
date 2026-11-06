@@ -11,8 +11,9 @@
  * 可选项：网关的令牌等价于「谁都可以往你的模型矩阵里发请求」。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { RoutingMode } from '../core/types.ts'
-import { discoverUpstreamModels } from './discovery.ts'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { ImportScope, ModelPrice, RoutingMode } from '../core/types.ts'
 
 /** 面板路由前缀。 */
 export const API_PREFIX = '/api/token-steward'
@@ -63,10 +64,13 @@ export interface VendorView {
   vendorName: string
   officialUrl: string
   customUrl: string
+  /** 线路二选一：official（内置官网）或 relay（中转站）。 */
+  endpointSource?: 'official' | 'relay'
   hasKey: boolean
   apiKeyMasked: string
   enabledModels: string[]
   modelTags: Record<string, string[]>
+  modelPricing: Record<string, ModelPrice>
 }
 
 /** 面板路由需要的数据面。 */
@@ -85,10 +89,26 @@ export interface PanelApi {
   getVendors?(): { mode: RoutingMode, vendors: VendorView[] }
   /** 整表保存厂家配置；apiKey 为空串表示「保留已存的明文」。 */
   saveVendors?(mode: RoutingMode, vendors: unknown): Promise<{ ok: boolean, error?: string }>
+  /** 从 DSH 现有 profile 抓取已经配好的上游（URL / 密钥 / 模型清单）。
+   *  scope 为空 = 整份导入；带了就只导入地址/编号对上的那一家。 */
+  importHarness?(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }>
+  /** 反向同步：把管家里的这家厂家写回 DSH 的系统模型设置。 */
+  syncHarness?(vendorId: string): Promise<{ ok: boolean, file?: string, models?: number, error?: string }>
+  /** 显式删除一家厂家；保存永远不删东西。 */
+  deleteVendor?(vendorId: string): Promise<{ ok: boolean, error?: string }>
 }
 
+/** 面板路由的可选资源目录。 */
+export interface PanelRouteOptions {
+  /** 内置头像目录（assets/avatars）；缺省时 avatar 端点返回 404。 */
+  avatarDirectory?: string
+}
+
+/** 内置头像 id 的合法字符（防止路径穿越）。 */
+const AVATAR_ID = /^[a-z0-9._-]+$/
+
 /** 建全部面板路由。 */
-export function makePanelRoutes(api: PanelApi): StewardRoute[] {
+export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}): StewardRoute[] {
   const guard = (res: ServerResponse): boolean => {
     // 只服务回环：这些端点会暴露本地令牌与全部模型清单。
     if (res.writableEnded) return false
@@ -133,8 +153,9 @@ export function makePanelRoutes(api: PanelApi): StewardRoute[] {
           writeJson(res, 400, { ok: false, error: 'body must be JSON' })
           return
         }
-        if (mode !== 'frugal' && mode !== 'balanced' && mode !== 'max_power') {
-          writeJson(res, 400, { ok: false, error: 'mode must be frugal | efficiency | max_power' })
+        // 四个模式都要认：白嫖（free）是一等模式，漏掉它面板就永远切不过去。
+        if (mode !== 'frugal' && mode !== 'balanced' && mode !== 'max_power' && mode !== 'free') {
+          writeJson(res, 400, { ok: false, error: 'mode must be frugal | balanced | max_power | free' })
           return
         }
         const accepted = api.setMode(mode)
@@ -190,15 +211,141 @@ export function makePanelRoutes(api: PanelApi): StewardRoute[] {
         const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl : ''
         const apiKey = typeof body.apiKey === 'string' ? body.apiKey : ''
         const vendorId = typeof body.vendorId === 'string' ? body.vendorId : ''
-        if (baseUrl === '' || apiKey === '') {
-          writeJson(res, 400, { ok: false, error: 'baseUrl and apiKey are required' })
+        // 允许只给 vendorId：宿主会用这家厂商已保存的线路与密钥回落，
+        // 免得用户为了拉一次模型把内置的官网地址原样再敲一遍。
+        if (vendorId === '' && (baseUrl === '' || apiKey === '')) {
+          writeJson(res, 400, { ok: false, error: 'vendorId, or baseUrl and apiKey, are required' })
           return
         }
         try {
-          const data = await discoverUpstreamModels(vendorId, baseUrl, apiKey)
+          // 走 api.discover 而不是直接调 discoverUpstreamModels：只有前者知道
+          // 「这家已保存的线路和密钥」，面板留空时靠它回落。绕过它就会拿空 key
+          // 去打上游，用户看到的是莫名其妙的 401。
+          const data = await api.discover(vendorId, baseUrl, apiKey)
           writeJson(res, 200, { ok: true, data })
         } catch (error) {
           writeJson(res, 502, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: API_PREFIX + '/delete-vendor',
+      handler: async (req, res) => {
+        if (!guard(res)) return
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+          return
+        }
+        if (req.method !== 'POST') {
+          writeJson(res, 405, { ok: false, error: 'use POST' })
+          return
+        }
+        if (api.deleteVendor === undefined) {
+          writeJson(res, 503, { ok: false, error: 'delete is not available' })
+          return
+        }
+        const text = await readBody(req, 8 * 1024)
+        if (text === undefined) {
+          writeJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        let body: { vendorId?: unknown }
+        try {
+          body = JSON.parse(text) as typeof body
+        } catch {
+          writeJson(res, 400, { ok: false, error: 'body must be JSON' })
+          return
+        }
+        const vendorId = typeof body.vendorId === 'string' ? body.vendorId : ''
+        if (vendorId === '') {
+          writeJson(res, 400, { ok: false, error: 'vendorId is required' })
+          return
+        }
+        try {
+          writeJson(res, 200, await api.deleteVendor(vendorId))
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: API_PREFIX + '/sync-harness',
+      handler: async (req, res) => {
+        if (!guard(res)) return
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+          return
+        }
+        if (req.method !== 'POST') {
+          writeJson(res, 405, { ok: false, error: 'use POST' })
+          return
+        }
+        if (api.syncHarness === undefined) {
+          writeJson(res, 503, { ok: false, error: 'sync is not available' })
+          return
+        }
+        const text = await readBody(req, 8 * 1024)
+        if (text === undefined) {
+          writeJson(res, 413, { ok: false, error: 'body too large' })
+          return
+        }
+        let body: { vendorId?: unknown }
+        try {
+          body = JSON.parse(text) as typeof body
+        } catch {
+          writeJson(res, 400, { ok: false, error: 'body must be JSON' })
+          return
+        }
+        const vendorId = typeof body.vendorId === 'string' ? body.vendorId : ''
+        if (vendorId === '') {
+          writeJson(res, 400, { ok: false, error: 'vendorId is required' })
+          return
+        }
+        try {
+          writeJson(res, 200, await api.syncHarness(vendorId))
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: API_PREFIX + '/import-harness',
+      handler: async (req, res) => {
+        if (!guard(res)) return
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+          return
+        }
+        if (req.method !== 'POST') {
+          writeJson(res, 405, { ok: false, error: 'use POST' })
+          return
+        }
+        if (api.importHarness === undefined) {
+          writeJson(res, 503, { ok: false, error: 'import is not available' })
+          return
+        }
+        // body 可选：不传就是整份导入；传了就按这家（id / 地址）只导入对上的那一条。
+        const text = await readBody(req, 8 * 1024)
+        let scope: ImportScope | undefined
+        if (text !== undefined && text.trim() !== '') {
+          let body: { vendorId?: unknown, baseUrl?: unknown }
+          try {
+            body = JSON.parse(text) as typeof body
+          } catch {
+            writeJson(res, 400, { ok: false, error: 'body must be JSON' })
+            return
+          }
+          const vendorId = typeof body.vendorId === 'string' ? body.vendorId.trim() : ''
+          const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : ''
+          if (vendorId !== '' || baseUrl !== '') scope = { vendorId, baseUrl }
+        }
+        try {
+          writeJson(res, 200, await api.importHarness(scope))
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
         }
       },
     },
@@ -235,13 +382,49 @@ export function makePanelRoutes(api: PanelApi): StewardRoute[] {
           writeJson(res, 400, { ok: false, error: 'body must be JSON' })
           return
         }
-        const mode = body.mode === 'balanced' || body.mode === 'max_power' ? body.mode : 'frugal'
+        // 四个模式都要认：漏掉 'free' 的话，在「白嫖」下保存一次厂家配置
+        // 就会把模式悄悄改回 frugal，用户下次发请求才发现路由变了。
+        const mode: RoutingMode = body.mode === 'balanced' || body.mode === 'max_power' || body.mode === 'free'
+          ? body.mode
+          : 'frugal'
         if (api.saveVendors === undefined) {
           writeJson(res, 503, { ok: false, error: 'vendor store is not available' })
           return
         }
         const result = await api.saveVendors(mode as RoutingMode, body.vendors)
         writeJson(res, result.ok ? 200 : 400, { ok: result.ok, ...(result.error !== undefined ? { error: result.error } : {}) })
+      },
+    },
+    {
+      kind: 'exact',
+      path: API_PREFIX + '/avatar',
+      handler: async (req, res) => {
+        if (!guard(res)) return
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+          return
+        }
+        if (req.method !== 'GET') {
+          writeJson(res, 405, { ok: false, error: 'use GET' })
+          return
+        }
+        const directory = options.avatarDirectory
+        const id = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('id') ?? ''
+        if (directory === undefined || !AVATAR_ID.test(id)) {
+          writeJson(res, 404, { ok: false, error: 'avatar not found' })
+          return
+        }
+        try {
+          const body = await readFile(join(directory, id + '.png'))
+          res.writeHead(200, {
+            'content-type': 'image/png',
+            'cache-control': 'public, max-age=86400',
+            'x-content-type-options': 'nosniff',
+          })
+          res.end(body)
+        } catch {
+          writeJson(res, 404, { ok: false, error: 'avatar not found' })
+        }
       },
     },
     {

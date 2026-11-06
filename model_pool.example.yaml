@@ -13,9 +13,11 @@ defaults:
   half_open_after_ms: 60000
 
 routing:
-  mode: frugal             # frugal | efficiency | max_power（UI 可实时覆盖）
+  mode: frugal             # frugal | balanced | max_power（UI 可实时覆盖）
   cache:
-    exact_match: false     # 本地精确响应缓存：同 prompt 在 TTL 内回放上次响应（不出站不计费）
+    # 本地精确响应缓存（默认开启）：prompt 的 SHA-256 在 TTL 内再次出现时，
+    # 直接回放 SQLite 里的上次响应字节——0 token、不出站、不计费。
+    exact_match: true
     max_entries: 500
     ttl_ms: 3600000
   agent_overrides:         # 子代理级钉子：命中 agent_id 时优先按这里走

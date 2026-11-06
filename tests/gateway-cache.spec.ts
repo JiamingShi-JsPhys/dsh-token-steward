@@ -6,11 +6,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { startGateway, type Gateway } from '../src/host/gateway.ts'
+import { clampOutputBudget, MAX_OUTPUT_CEILING, startGateway, type Gateway } from '../src/host/gateway.ts'
 import { createRouter } from '../src/core/router.ts'
 import { model, provider } from './fixtures.ts'
 import type { PoolConfig } from '../src/core/types.ts'
 import type { FetchLike } from '../src/host/upstream.ts'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 function config(overrides: { exactMatch?: boolean } = {}): PoolConfig {
   return {
@@ -181,4 +184,93 @@ test('回归：Agent 循环永远带 tools——目录缺 tool-use 的模型也�
     assert.equal(response.status, 200, '未知模型默认带 tool-use，不再被硬过滤误杀')
     assert.equal(calls.length, 1)
   }, { exactMatch: false })
+})
+
+
+test('SQLite 缓存跨网关重启仍命中，并计入今日已省', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'steward-gw-cache-'))
+  const calls: string[] = []
+  const fetchImpl: FetchLike = async () => {
+    calls.push('upstream')
+    return jsonUpstream()
+  }
+  const policy = { exact_match: true, max_entries: 64, ttl_ms: 600_000 }
+  const buildConfig = (): PoolConfig => ({
+    version: 1,
+    defaults: { timeout_ms: 5_000, max_attempts: 3, cooldown_ms: 30_000, failure_threshold: 3, half_open_after_ms: 60_000 },
+    routing: { mode: 'frugal', aliases: {}, agent_overrides: {}, cache: policy },
+    providers: [provider('cheap', [model({
+      id: 'cheap-1',
+      cost_level: 'free',
+      capabilities: ['coding', 'tool-use'],
+      pricing: { currency: 'USD', input_per_mtok: 1, output_per_mtok: 2 },
+    })])],
+  })
+  try {
+    const firstRouter = createRouter(buildConfig())
+    const first = await startGateway({
+      config: buildConfig,
+      router: () => firstRouter,
+      secrets: () => new Map([['cheap', 'sk-cheap']]),
+      fetchImpl,
+      cacheDirectory: directory,
+    })
+    try {
+      await post(first, chatPrompt('persist me'))
+      const stats = await first.cacheStats()
+      assert.equal(stats.backend, 'sqlite')
+      assert.equal((await post(first, chatPrompt('persist me'))).status, 200)
+      assert.equal(calls.length, 1)
+    } finally {
+      await first.close()
+    }
+
+    // 新进程语义：新网关 + 新路由引擎，同一个数据目录。
+    const secondRouter = createRouter(buildConfig())
+    const second = await startGateway({
+      config: buildConfig,
+      router: () => secondRouter,
+      secrets: () => new Map([['cheap', 'sk-cheap']]),
+      fetchImpl,
+      cacheDirectory: directory,
+    })
+    try {
+      const replay = await post(second, chatPrompt('persist me'))
+      assert.equal(replay.status, 200)
+      assert.equal(calls.length, 1, '重启后仍然不出站')
+      const stats = await second.cacheStats()
+      assert.equal(stats.backend, 'sqlite')
+      assert.ok(stats.cacheHitsToday >= 1)
+      assert.ok(stats.savedTokens > 0)
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('缓存关闭时 backend 报 off（诚实，不假装在工作）', async () => {
+  await withGateway(async (gateway) => {
+    const stats = await gateway.cacheStats()
+    assert.equal(stats.backend, 'off')
+  }, { exactMatch: false })
+})
+
+test('出站预算：max_tokens 超过 65536 一律压到上限（Agnes 会直接 400）', () => {
+  const body: Record<string, unknown> = { model: 'x', max_tokens: 128_000 }
+  clampOutputBudget(body)
+  assert.equal(body.max_tokens, MAX_OUTPUT_CEILING)
+
+  const alt: Record<string, unknown> = { model: 'x', max_completion_tokens: 99_999 }
+  clampOutputBudget(alt)
+  assert.equal(alt.max_completion_tokens, MAX_OUTPUT_CEILING)
+
+  // 本来就在上限内的不动，非数字也不动。
+  const small: Record<string, unknown> = { max_tokens: 4096 }
+  clampOutputBudget(small)
+  assert.equal(small.max_tokens, 4096)
+  const weird: Record<string, unknown> = { max_tokens: 'lots' }
+  clampOutputBudget(weird)
+  assert.equal(weird.max_tokens, 'lots')
 })
