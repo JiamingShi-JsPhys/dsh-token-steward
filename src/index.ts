@@ -572,6 +572,7 @@ export async function apply(ctx: {
           usage: usageCache.facts as never,
           usageAvailable: usageCache.available,
           pool: poolState,
+          retentionDays: settings.retainDays,
           ...(cache === undefined
             ? {}
             : {

@@ -51,6 +51,8 @@ export interface SettingsPanelProps {
   vendors: { mode: RoutingMode, vendors: VendorView[], catalog: CatalogVendor[] } | undefined
   /** 重新读一次配置。 */
   onReload(): void
+  /** 设置页的「刷新」：配置、网关参数、厂家列表一起重取。 */
+  onRefreshAll?: () => void
   /** 只重拉厂家列表：打开设置时同步一次，别的地方（Agent 工具）改了配置也能看见。 */
   onRefreshVendors?: () => void
   /** 切换默认模式。 */
@@ -137,8 +139,14 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
           >
             {props.t('settings.repo')}
           </a>
-          <button type="button" className={css.iconButton} onClick={props.onReload}>
-            {props.t('panel.reload')}
+          <button
+            type="button"
+            className={css.iconButton}
+            onClick={props.onRefreshAll ?? props.onReload}
+            data-dsh-part="settings-refresh"
+            title={props.t('settings.refreshHint')}
+          >
+            {props.t('settings.refresh')}
           </button>
         </div>
       </header>
@@ -147,10 +155,16 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
         {statusText}
       </div>
 
-      <Field label={props.t('settings.poolPath')} value={props.poolPath} mono />
+      <Field
+        label={props.t('settings.poolPath')}
+        value={props.poolPath}
+        hint={props.t('settings.poolPathHint')}
+        mono
+      />
       <Field
         label={props.t('settings.gateway')}
         value={props.gateway === undefined ? '—' : props.gateway.baseUrl}
+        hint={props.t('settings.gatewayHint')}
         mono
         onCopy={props.gateway === undefined ? undefined : () => { void copyText('baseUrl', props.gateway?.baseUrl ?? '') }}
         copyLabel={copied === 'baseUrl' ? props.t('settings.copied') : props.t('settings.copy')}
@@ -158,11 +172,19 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
       <Field
         label={props.t('settings.token')}
         value={props.gateway === undefined ? '—' : props.gateway.token}
+        hint={props.t('settings.tokenHint')}
         mono
+        secret
+        showLabel={props.t('settings.show')}
+        hideLabel={props.t('settings.hide')}
         onCopy={props.gateway === undefined ? undefined : () => { void copyText('token', props.gateway?.token ?? '') }}
         copyLabel={copied === 'token' ? props.t('settings.copied') : props.t('settings.copy')}
       />
-      <Field label={props.t('settings.retainDays')} value={String(props.retainDays)} />
+      <Field
+        label={props.t('settings.retainDays')}
+        value={String(props.retainDays)}
+        hint={props.t('settings.retainDaysHint')}
+      />
 
       {/* 调度模式由输入框里选的模型决定（管家·自动 / 极致便宜 / 效率优先 / 最强火力 / 白嫖），
           设置页不再放一排永远和真实行为对不上的按钮，只把「现在是什么模式」说清楚。 */}
@@ -1023,20 +1045,46 @@ function Field(props: {
   label: string
   value: string
   mono?: boolean
+  /** 字段下面的一行用途说明。 */
+  hint?: string
+  /** 值默认打码（令牌这类东西），点「显示」才露出。 */
+  secret?: boolean
+  showLabel?: string
+  hideLabel?: string
   onCopy?: (() => void) | undefined
   copyLabel?: string | undefined
 }): ReactNode {
+  const [revealed, setRevealed] = useState(false)
+  // 「—」是「网关没起」的占位，不该被打成一串圆点，否则看起来像有值。
+  const masked = props.secret === true && !revealed && props.value !== '—'
+  const text = masked ? '•'.repeat(Math.max(12, Math.min(32, props.value.length))) : props.value
   return (
     <div className={css.settingsField}>
       <div className={css.metricLabel}>{props.label}</div>
       <div className={css.settingsValueRow}>
-        <code className={props.mono === true ? css.settingsValueMono : css.settingsValue} title={props.value}>
-          {props.value}
+        <code
+          className={props.mono === true ? css.settingsValueMono : css.settingsValue}
+          title={masked ? props.label : props.value}
+          data-dsh-part={props.secret === true ? 'secret-value' : undefined}
+          data-revealed={props.secret === true ? String(!masked) : undefined}
+        >
+          {text}
         </code>
+        {props.secret !== true || props.value === '—' ? null : (
+          <button
+            type="button"
+            className={css.iconButton}
+            onClick={() => { setRevealed((shown) => !shown) }}
+            data-dsh-part="toggle-secret"
+          >
+            {revealed ? (props.hideLabel ?? 'Hide') : (props.showLabel ?? 'Show')}
+          </button>
+        )}
         {props.onCopy === undefined ? null : (
           <button type="button" className={css.iconButton} onClick={props.onCopy}>{props.copyLabel}</button>
         )}
       </div>
+      {props.hint === undefined ? null : <p className={css.settingsHint}>{props.hint}</p>}
     </div>
   )
 }

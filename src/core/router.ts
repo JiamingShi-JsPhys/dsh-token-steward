@@ -502,6 +502,7 @@ export function createRouter(config: PoolConfig, options?: Partial<RouterOptions
       mode: currentMode,
       updatedAt: now,
       usageAvailable: input?.usageAvailable ?? Object.keys(usage).length > 0,
+      ...(input?.retentionDays !== undefined ? { retentionDays: input.retentionDays } : {}),
       models: cards,
       agents: agentViews,
       recent: recent.slice(),

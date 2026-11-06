@@ -438,6 +438,8 @@ export interface SnapshotInput {
     cost: { currency: string, amount: number } | null
     cacheHits: number
   }
+  /** 台账保留天数（宿主配置的真实值，面板如实展示，不写死）。 */
+  retentionDays?: number
 }
 
 /** 路由引擎：plan 纯决策，report 只动内存状态，都不触碰网络与磁盘。 */
@@ -554,6 +556,8 @@ export interface MatrixSnapshot {
   totals: MatrixTotals
   /** 今日已省（缓存 + 路由）；没有数据时是 0 token / null 金额。 */
   savings: SavingsView
+  /** 台账保留天数；宿主未报时为 undefined（面板显示默认值）。 */
+  retentionDays?: number
   pool: { status: 'ok' | 'rejected' | 'loading'; source: string; error?: string }
 }
 

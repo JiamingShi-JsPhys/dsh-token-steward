@@ -82,13 +82,19 @@ test('reload 用 POST 并回报结果', async () => {
 function fakeClient(): {
   client: Parameters<typeof createPanelStore>[0]
   calls: { snapshot: number, setMode: string[], reload: number }
-  next: { snapshot?: () => Promise<MatrixSnapshot>, setMode?: () => Promise<boolean>, reload?: () => Promise<{ ok: boolean, status: string, error?: string }> }
+  next: {
+    snapshot?: () => Promise<MatrixSnapshot>
+    setMode?: () => Promise<boolean>
+    reload?: () => Promise<{ ok: boolean, status: string, error?: string }>
+    gateway?: () => Promise<{ baseUrl: string, token: string, modelIds: string[], port: number } | undefined>
+  }
 } {
   const calls = { snapshot: 0, setMode: [] as string[], reload: 0 }
   const next: {
     snapshot?: () => Promise<MatrixSnapshot>
     setMode?: () => Promise<boolean>
     reload?: () => Promise<{ ok: boolean, status: string, error?: string }>
+    gateway?: () => Promise<{ baseUrl: string, token: string, modelIds: string[], port: number } | undefined>
   } = {}
   return {
     calls,
@@ -107,7 +113,7 @@ function fakeClient(): {
         return next.reload === undefined ? { ok: true, status: 'ok' } : await next.reload()
       },
       async gateway() {
-        return undefined
+        return next.gateway === undefined ? undefined : await next.gateway()
       },
       async vendors() {
         return { mode: 'frugal' as const, vendors: [], catalog: [] }
@@ -301,4 +307,43 @@ test('刷新拿到快照后会顺手取一次网关参数', async () => {
   })
   await store.refresh()
   assert.equal(store.getState().gateway?.token, 'tok')
+})
+
+test('refreshGateway 每次都会重取：网关重启后的新端口与新令牌能刷新出来', async () => {
+  const fake = fakeClient()
+  let token = 'old-token'
+  let port = 1
+  fake.next.gateway = async () => ({ baseUrl: 'http://127.0.0.1:' + String(port) + '/v1', token, modelIds: [], port })
+  const store = createPanelStore(fake.client)
+
+  await store.refreshGateway()
+  assert.equal(store.getState().gateway?.token, 'old-token')
+
+  token = 'new-token'
+  port = 2
+  await store.refreshGateway()
+  assert.equal(store.getState().gateway?.token, 'new-token')
+  assert.equal(store.getState().gateway?.port, 2)
+})
+
+test('网关停掉后 refreshGateway 把接线参数清空，面板显示「—」而不是旧值', async () => {
+  const fake = fakeClient()
+  fake.next.gateway = async () => ({ baseUrl: 'http://127.0.0.1:1/v1', token: 'tok', modelIds: [], port: 1 })
+  const store = createPanelStore(fake.client)
+  await store.refreshGateway()
+  assert.equal(store.getState().gateway?.token, 'tok')
+
+  fake.next.gateway = async () => undefined
+  await store.refreshGateway()
+  assert.equal(store.getState().gateway, undefined)
+})
+
+test('refreshAll 一次重读配置、网关参数与厂家列表', async () => {
+  const fake = fakeClient()
+  fake.next.gateway = async () => ({ baseUrl: 'http://127.0.0.1:1/v1', token: 'tok', modelIds: [], port: 1 })
+  const store = createPanelStore(fake.client)
+  await store.refreshAll()
+  assert.equal(fake.calls.reload, 1)
+  assert.equal(store.getState().gateway?.token, 'tok')
+  assert.deepEqual(store.getState().vendors?.vendors, [])
 })

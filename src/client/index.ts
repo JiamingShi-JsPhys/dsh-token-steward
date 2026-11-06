@@ -151,9 +151,11 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
         snapshot: state.snapshot,
         gateway: state.gateway,
         poolPath: state.snapshot?.pool.source ?? 'model_pool.yaml',
-        retainDays: 180,
+        // 台账保留天数由宿主如实报上来；拿不到时才退回配置默认值。
+        retainDays: state.snapshot?.retentionDays ?? 180,
         vendors: state.vendors,
         onReload: () => { void store.reload() },
+        onRefreshAll: () => { void store.refreshAll() },
         onRefreshVendors: () => { void store.refreshVendors() },
         onSelectMode: (mode) => { void store.setMode(mode) },
         onSaveVendors: (vendors) => { void store.saveVendors(state.vendors?.mode ?? 'frugal', vendors) },

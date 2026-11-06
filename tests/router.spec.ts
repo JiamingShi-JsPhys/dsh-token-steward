@@ -417,6 +417,12 @@ test('快照按币种汇总成本，混币时不给总额', () => {
   assert.equal(single.totals.cacheHitRate, 0.5)
 })
 
+test('快照如实带出台账保留天数；宿主没报时不编造默认值', () => {
+  const router = createRouter(matrix(), undefined)
+  assert.equal(router.snapshot(1_000).retentionDays, undefined)
+  assert.equal(router.snapshot(1_100, { retentionDays: 90 }).retentionDays, 90)
+})
+
 test('快照 usageAvailable 随计量来源切换', () => {
   const router = createRouter(matrix(), undefined)
   assert.equal(router.snapshot(1_000).usageAvailable, false)

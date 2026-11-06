@@ -44,6 +44,10 @@ export interface PanelStore {
   reload(): Promise<void>
   /** 拉一次厂家配置（设置页打开时调用）。 */
   refreshVendors(): Promise<void>
+  /** 重取网关接线参数（端口与令牌随网关重启变化）。 */
+  refreshGateway(): Promise<void>
+  /** 设置页的「刷新」：重读配置 + 网关参数 + 厂家列表。 */
+  refreshAll(): Promise<void>
   /** 整表保存厂家配置；apiKey 空串 = 保留已存明文。 */
   saveVendors(mode: RoutingMode, vendors: unknown): Promise<void>
   /** 探测上游模型列表；失败抛错给调用方展示。 */
@@ -175,6 +179,28 @@ export function createPanelStore(client: PanelClient): PanelStore {
     }
   }
 
+  /**
+   * 重取网关接线参数。
+   *
+   * 端口与本地令牌是网关每次启动重新生成的：DSH 重启过之后，面板上缓存的
+   * 旧值就是错的，照着它去配 profile 只会得到 401。所以这件事必须能手动
+   * 触发，而不是「第一次取到就一直用」。
+   */
+  async function refreshGateway(): Promise<void> {
+    try {
+      const gateway = await client.gateway()
+      set({ gateway })
+    } catch {
+      // 网关没起是正常状态，显示「—」即可，不要把它当成错误横幅。
+      set({ gateway: undefined })
+    }
+  }
+
+  /** 设置页的「刷新」：配置、网关、厂家三样一起重取。 */
+  async function refreshAll(): Promise<void> {
+    await Promise.all([reload(), refreshGateway(), refreshVendors()])
+  }
+
   async function importHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }> {
     const result = await client.importHarness(scope)
     if (result.ok) await refreshVendors()
@@ -207,6 +233,8 @@ export function createPanelStore(client: PanelClient): PanelStore {
     setMode,
     reload,
     refreshVendors,
+    refreshGateway,
+    refreshAll,
     discoverModels,
     importHarness,
     syncHarness,
