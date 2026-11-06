@@ -201,15 +201,26 @@ export function createPanelStore(client: PanelClient): PanelStore {
     await Promise.all([reload(), refreshGateway(), refreshVendors()])
   }
 
+  /**
+   * 保存 / 导入 / 删除之后同时重取厂家列表与快照。
+   *
+   * 只刷厂家列表是不够的：白嫖页与模型卡片读的是快照（路由引擎里真正入池的
+   * 型号），悬浮面板没展开时快照根本不轮询——用户刚把价目改成 0、卡片上也挂了
+   * 「白嫖可用」，切到白嫖页却一个都没有，就是一例。
+   */
+  async function refreshAfterMutation(): Promise<void> {
+    await Promise.all([refreshVendors(), refresh()])
+  }
+
   async function importHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }> {
     const result = await client.importHarness(scope)
-    if (result.ok) await refreshVendors()
+    if (result.ok) await refreshAfterMutation()
     return result
   }
 
   async function deleteVendor(vendorId: string): Promise<{ ok: boolean, error?: string }> {
     const result = await client.deleteVendor(vendorId)
-    if (result.ok) await refreshVendors()
+    if (result.ok) await refreshAfterMutation()
     return result
   }
 
@@ -242,7 +253,7 @@ export function createPanelStore(client: PanelClient): PanelStore {
     async saveVendors(mode, vendors) {
       try {
         await client.saveVendors(mode, vendors)
-        await refreshVendors()
+        await refreshAfterMutation()
       } catch (error) {
         set({ error: messageOf(error) })
       }

@@ -146,6 +146,11 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
       // 用户看到的就是「删除键没反应」。这里把 store 的通知接进 React 的渲染周期。
       const [, bump] = useReducer((n: number) => n + 1, 0)
       useEffect(() => store.subscribe(() => { bump() }), [])
+      // 打开设置页就取一次最新数据：快照只在悬浮面板展开时轮询，
+      // 靠它自己更新的话，白嫖页读到的可能是很久以前的入池结果。
+      useEffect(() => {
+        void Promise.all([store.refresh(), store.refreshVendors(), store.refreshGateway()])
+      }, [])
       const state = store.getState()
       return createElement(SettingsPanel, {
         snapshot: state.snapshot,
@@ -156,6 +161,7 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
         vendors: state.vendors,
         onReload: () => { void store.reload() },
         onRefreshAll: () => { void store.refreshAll() },
+        onRefreshData: () => { void Promise.all([store.refresh(), store.refreshVendors()]) },
         onRefreshVendors: () => { void store.refreshVendors() },
         onSelectMode: (mode) => { void store.setMode(mode) },
         onSaveVendors: (vendors) => { void store.saveVendors(state.vendors?.mode ?? 'frugal', vendors) },

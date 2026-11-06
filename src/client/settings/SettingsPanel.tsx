@@ -53,6 +53,8 @@ export interface SettingsPanelProps {
   onReload(): void
   /** 设置页的「刷新」：配置、网关参数、厂家列表一起重取。 */
   onRefreshAll?: () => void
+  /** 重取快照与厂家列表（切到白嫖页时用：白嫖读的是快照，不重取就是旧的入池结果）。 */
+  onRefreshData?: () => void
   /** 只重拉厂家列表：打开设置时同步一次，别的地方（Agent 工具）改了配置也能看见。 */
   onRefreshVendors?: () => void
   /** 切换默认模式。 */
@@ -98,6 +100,12 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
     const timer = setTimeout(() => { setCopied(undefined) }, 1_500)
     return () => { clearTimeout(timer) }
   }, [copied])
+
+  // 切到白嫖页时重取一次快照：这一页列的是「路由引擎里真正入池的零成本型号」，
+  // 而快照只在悬浮面板展开时轮询——不重取的话，刚保存的型号要等面板打开才出现。
+  useEffect(() => {
+    if (section === 'freeload') props.onRefreshData?.()
+  }, [section])
 
   async function copyText(label: string, text: string): Promise<void> {
     const run = props.copy ?? defaultCopy
