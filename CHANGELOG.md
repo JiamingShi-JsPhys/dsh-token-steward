@@ -3,8 +3,8 @@
 
 ## 1.1.0 — 2026-11-07
 
-### 子代理档位 `steward:subagent`
-- 新增独立的选路档位（不是模式，不改全局档位）：`agentic` 质量 0.6 + 成本 0.4，
+### 子代理专用模型 `steward:subagent`（不是模式）
+- 新增子代理专用的选路规则（不是模式，不改全局档位；只要在用管家开头的模型就生效）：`agentic` 质量 0.6 + 成本 0.4，
   窗口每 100k +4 分（封顶 40），延迟最多 +20 分，burst 打散仍是决定性的，
   再加上会话粘性 +300；agentic 维度 B+ 是硬门槛。
 - `parseVirtualModel` 认得 `steward:subagent` / `Steward Subagent` / `管家·子代理`；

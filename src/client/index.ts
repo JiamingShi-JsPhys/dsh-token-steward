@@ -77,7 +77,6 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
           open: state.open,
           t: translate,
           onToggle: () => { store.setOpen(!state.open) },
-          onCycleMode: (mode) => { void store.setMode(mode) },
         }),
         state.open
           ? createElement(StewardPanel, { state, store, t: translate, now, onClose: () => { store.setOpen(false) } })
