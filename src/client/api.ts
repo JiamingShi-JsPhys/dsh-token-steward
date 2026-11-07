@@ -15,6 +15,8 @@ export interface GatewayInfo {
   token: string
   modelIds: string[]
   port: number
+  /** 网关有没有被写进 DSH 的模型菜单（profile 的 providers.steward）。 */
+  wired?: boolean
 }
 
 /** 厂家配置的过线视图（密钥只有掩码）。 */

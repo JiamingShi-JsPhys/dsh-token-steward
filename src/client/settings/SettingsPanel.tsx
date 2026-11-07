@@ -44,7 +44,7 @@ const NEW_TAB = '__new__'
 export interface SettingsPanelProps {
   snapshot: MatrixSnapshot | undefined
   /** 网关接线参数；未启动时 undefined。 */
-  gateway: { baseUrl: string, token: string, modelIds: string[], port: number } | undefined
+  gateway: { baseUrl: string, token: string, modelIds: string[], port: number, wired?: boolean } | undefined
   /** 配置文件路径。 */
   poolPath: string
   /** 台账保留天数。 */
@@ -217,6 +217,16 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
             onCopy={props.gateway === undefined ? undefined : () => { void copyText('baseUrl', props.gateway?.baseUrl ?? '') }}
             copyLabel={copied === 'baseUrl' ? props.t('settings.copied') : props.t('settings.copy')}
           />
+          {/* 模型菜单里有没有管家：这是「装完却没多出东西」最常见的原因。 */}
+          {props.gateway === undefined ? null : (
+            <div
+              className={css.vendorNotice}
+              data-dsh-part="gateway-wired"
+              data-wired={props.gateway.wired === false ? 'false' : 'true'}
+            >
+              {props.gateway.wired === false ? props.t('settings.wiredNo') : props.t('settings.wiredYes')}
+            </div>
+          )}
           <Field
             label={props.t('settings.token')}
             value={props.gateway === undefined ? '—' : props.gateway.token}

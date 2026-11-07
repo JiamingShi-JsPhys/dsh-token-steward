@@ -14,7 +14,7 @@
  * 都只是「本插件不可用」，宿主该照常工作。
  */
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { access, mkdir, readFile, readdir } from 'node:fs/promises'
 
@@ -22,6 +22,7 @@ import { createPoolFileLoader } from './host/pool-file.ts'
 import { createVendorStore, coerceVendorsList, maskKey, type VendorsDocument } from './host/vendor-store.ts'
 import { harnessProviders, harnessVendor, mergeImportedVendors, selectHarnessProviders, type HarnessProvider } from './host/harness-import.ts'
 import { HARNESS_DEFAULT_MAX_TOKENS, resolveSyncVendorId, syncInputFromVendor, upsertHarnessProvider, type HarnessSyncInput } from './host/harness-sync.ts'
+import { stewardWired, wireStewardInText, type StewardWireSpec } from './host/harness-wire.ts'
 import { discoverUpstreamModels } from './host/discovery.ts'
 import { executeStewardAction, STEWARD_TOOL_PARAMETERS, type StewardActionArgs, type StewardToolDeps } from './host/agent-tools.ts'
 import { synthesizePool, templateVendors, vendorEndpoint, vendorIsRoutable } from './core/vendors.ts'
@@ -59,6 +60,8 @@ export interface StewardConfigFields {
   retainDays?: unknown
   usagePollMs?: unknown
   gatewayPort?: unknown
+  /** 启动时把网关自动写进 DSH 的模型菜单；默认开。 */
+  autoWire?: unknown
 }
 
 /** 解析后的配置。 */
@@ -68,6 +71,7 @@ export interface ResolvedConfig {
   retainDays: number
   usagePollMs: number
   gatewayPort: number
+  autoWire: boolean
 }
 
 /** 默认保留天数。 */
@@ -76,8 +80,15 @@ const DEFAULT_RETAIN_DAYS = 180
 /** 默认计量轮询间隔。 */
 const DEFAULT_USAGE_POLL_MS = 15_000
 
-/** 默认网关端口：0 表示由系统分配。 */
-const DEFAULT_GATEWAY_PORT = 0
+/**
+ * 默认网关端口。
+ *
+ * 必须是**固定值**：这个地址会被写进 DSH 的 profile（`providers.steward.baseURL`），
+ * 端口每次启动都变的话，模型菜单里的「管家」第二天就指向一个没人监听的端口，
+ * 界面只报「连接被拒绝」，看不出是端口漂了。51741 与 README 的说明一致；
+ * 被占用时自动退到系统分配（见 startGateway 的兜底）。
+ */
+const DEFAULT_GATEWAY_PORT = 51_741
 
 /** 从配置字段里读字符串（可能是 volatile 引用）。 */
 function readString(field: unknown): string | undefined {
@@ -125,6 +136,7 @@ export function resolveConfig(config?: StewardConfigFields): ResolvedConfig {
     retainDays: Math.max(1, Math.round(readNumber(config?.retainDays, DEFAULT_RETAIN_DAYS))),
     usagePollMs: Math.max(2_000, Math.round(readNumber(config?.usagePollMs, DEFAULT_USAGE_POLL_MS))),
     gatewayPort: Math.max(0, Math.round(readNumber(config?.gatewayPort, DEFAULT_GATEWAY_PORT))),
+    autoWire: readBoolean(config?.autoWire, true),
   }
 }
 
@@ -190,6 +202,18 @@ async function writeProviderPreservingComments(text: string, input: HarnessSyncI
       return doc.toString?.()
     }
     return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 宿主运行在哪个 profile 下：从本包在磁盘上的位置反推（`…/profiles/<名字>/node_modules/dsh-token-steward`）。 */
+function ownProfilePatchFile(): string | undefined {
+  try {
+    // lib/index.js → lib → dsh-token-steward → node_modules → <profile>
+    const profileDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))))
+    if (basename(dirname(profileDir)) !== 'profiles') return undefined
+    return join(profileDir, 'cordis.patch.yml')
   } catch {
     return undefined
   }
@@ -422,6 +446,49 @@ export async function apply(ctx: {
     }
   }
 
+  /** 网关有没有被接进 DSH 的模型菜单（面板据此提示）。 */
+  let harnessWired = false
+
+  /**
+   * 启动时自动接线：把 `providers.steward` 写进 profile。
+   *
+   * 为什么放在启动而不是「让用户点一下」：模型菜单读不到 steward 时，DSH 只会
+   * 把这家上游藏起来，用户看到的是「装了个插件，什么也没多出来」——这正是
+   * 最劝退的一步。已经接好就一个字节都不写（幂等），失败也只是记一条日志。
+   */
+  async function autoWireHarness(baseUrl: string): Promise<void> {
+    if (!settings.autoWire) return
+    const spec: StewardWireSpec = { baseUrl, apiKeyEnv: STEWARD_TOKEN_ENV }
+    try {
+      const files = await harnessPatchFiles()
+      if (files.length === 0) {
+        log.warn('auto-wire skipped: no cordis.patch.yml under %s', join(dshHome(), 'profiles'))
+        return
+      }
+      // 优先写本插件自己所在的那个 profile：多 profile 的机器上写错一份等于没接。
+      const own = ownProfilePatchFile()
+      const file = own !== undefined && files.includes(own) ? own : files[0] as string
+      const text = await readFile(file, 'utf8')
+      const codec = await loadYamlCodec()
+      if (stewardWired(codec.parse(text), spec)) {
+        harnessWired = true
+        return
+      }
+      // 走文本拼接而不是「解析成对象再整体序列化」：profile 是用户手写的，
+      // 为了加七行把整份重排一遍不值得，写坏了宿主当场起不来。
+      const written = wireStewardInText(text, spec)
+      if (written === undefined) {
+        log.warn('auto-wire skipped: %s has an llm-pi-ai block this plugin cannot splice (flow-style providers?)', file)
+        return
+      }
+      await writeFileAtomic(file, written)
+      harnessWired = true
+      log.info('wired the gateway into %s; restart DSH once to see the four modes in the model menu', file)
+    } catch (error) {
+      log.warn('auto-wire failed: %s', messageOf(error))
+    }
+  }
+
   /** profile 里的 cordis.patch.yml（desktop 优先，其余 profile 一并扫）。 */
   async function harnessPatchFiles(): Promise<string[]> {
     const profiles = join(dshHome(), 'profiles')
@@ -520,27 +587,37 @@ export async function apply(ctx: {
   let gateway: Gateway | undefined
   const statePath = join(directory, 'gateway.json')
   if (router !== undefined) {
+    const boot = (port: number): Promise<Gateway> => startGateway({
+      config: () => configValue,
+      router: () => router as StewardRouter,
+      vendors: () => vendorDoc.vendors,
+      secrets: () => secrets,
+      ledger,
+      log: (level, message) => { log[level]('%s', message) },
+      port,
+      statePath,
+      // SQLite 响应缓存落在插件数据目录：重启后仍可命中，命中即 0 token。
+      cacheDirectory: directory,
+      // composer 里选了「管家·极致便宜」这类模型 → 默认模式跟着改并落盘。
+      onMode: (mode) => {
+        if (vendorDoc.mode === mode) return
+        vendorDoc = { ...vendorDoc, mode }
+        void vendorStore.save(vendorDoc).catch((error: unknown) => {
+          log.warn('cannot persist mode: %s', error instanceof Error ? error.message : String(error))
+        })
+      },
+    })
     try {
-      gateway = await startGateway({
-        config: () => configValue,
-        router: () => router as StewardRouter,
-        vendors: () => vendorDoc.vendors,
-        secrets: () => secrets,
-        ledger,
-        log: (level, message) => { log[level]('%s', message) },
-        port: settings.gatewayPort,
-        statePath,
-        // SQLite 响应缓存落在插件数据目录：重启后仍可命中，命中即 0 token。
-        cacheDirectory: directory,
-        // composer 里选了「管家·极致便宜」这类模型 → 默认模式跟着改并落盘。
-        onMode: (mode) => {
-          if (vendorDoc.mode === mode) return
-          vendorDoc = { ...vendorDoc, mode }
-          void vendorStore.save(vendorDoc).catch((error: unknown) => {
-            log.warn('cannot persist mode: %s', error instanceof Error ? error.message : String(error))
-          })
-        },
-      })
+      try {
+        gateway = await boot(settings.gatewayPort)
+      } catch (error) {
+        // 固定端口被别的进程占着（同时开两个 DSH、或者用户自己占用了 51741）：
+        // 退到系统分配，插件照常可用，只是这次地址和 profile 里写的不一样。
+        const code = (error as { code?: unknown } | null)?.code
+        if (settings.gatewayPort === 0 || code !== 'EADDRINUSE') throw error
+        log.warn('port %d is taken; falling back to a system-assigned port', settings.gatewayPort)
+        gateway = await boot(0)
+      }
       // DSH 的 steward provider 用 `apiKeyEnv: STEWARD_LOCAL_TOKEN` 取本地令牌。
       // 令牌是网关自己生成的，只有我们手里有——必须由我们写进进程环境。
       // 指望用户手工 export 是不可靠的：换个启动方式（比如从另一个 shell 拉起）
@@ -566,6 +643,7 @@ export async function apply(ctx: {
       }
       await writeFileAtomic(statePath, JSON.stringify(state, null, 2) + '\n')
       log.info('gateway ready at %s (%d models)', state.baseUrl, state.modelIds.length)
+      await autoWireHarness(state.baseUrl)
     } catch (error) {
       // 端口占不到之类的失败：插件仍挂载，面板的「个人网关」一栏会显示破折号。
       log.error('gateway failed to start: %s', messageOf(error))
@@ -677,6 +755,7 @@ export async function apply(ctx: {
           token: gateway.token(),
           modelIds: gatewayModelIds(configValue),
           port: gateway.port(),
+          wired: harnessWired,
         },
     }, { avatarDirectory })
     for (const route of routes) {

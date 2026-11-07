@@ -87,7 +87,7 @@ export interface PanelApi {
   /** 重新读配置；返回结果说明。 */
   reload(): Promise<{ ok: boolean, status: string, error?: string }>
   /** 网关接线参数；未启动时为 undefined。 */
-  gateway(): { baseUrl: string, token: string, modelIds: string[], port: number } | undefined
+  gateway(): { baseUrl: string, token: string, modelIds: string[], port: number, wired?: boolean } | undefined
   /** 同源发现代理：宿主向真实上游探测模型列表（浏览器跨源被 CORS 拦，必须代理）。 */
   discover?(vendorId: string, baseUrl: string, apiKey: string): Promise<unknown>
   /** 当前厂家配置（密钥掩码）+ 持久化的全局模式；未实现时端点返回 503。 */

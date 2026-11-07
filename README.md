@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.1.2 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 537 条
+**版本：** 1.1.1 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 552 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
@@ -197,15 +197,14 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
         enabled: true
 ```
 
-### 3. 把 `llm-pi-ai` 指向网关
+### 3. 重启 DSH —— 接线是自动的
+
+**这一步不用手写配置。** DSH 起来、网关就绪之后，插件会自己检查 profile 里
+`@deepseek-ai/dsh-llm-pi-ai` 的 `providers`，缺 `steward` 这一家就补上：
 
 ```yaml
-- id: llm-pi-ai
-  name: '@deepseek-ai/dsh-llm-pi-ai'
-  config:
-    providers:
       steward:
-        displayName: Steward Matrix
+        displayName: 管家
         api: openai-completions
         baseURL: http://127.0.0.1:51741/v1
         apiKeyEnv: STEWARD_LOCAL_TOKEN
@@ -217,9 +216,18 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
           - { id: 'steward:free',      name: '管家·白嫖' }
 ```
 
-输入框里只有这四个档位。子代理专用模型（`steward:subagent`）仍然可用，只是不再出现在模型选择器里——它给 `dsh-tool-subagent` 用，不是给人选的模式。
+写回是**文本拼接**：只插/换 `steward` 那一段，你自己的注释、空行、缩进风格、
+别的厂家一个字都不会动；已经接好就一个字节都不写。认不出结构（比如
+`providers: {...}` 的 flow 写法）它什么都不做，只记一条日志——不会把你的
+profile 重排坏。
 
-改完 profile 需要**重启 DSH 服务**才生效。
+写进去之后**再重启一次 DSH**，输入框里就能选到四个档位。
+「管家设置 → 个人网关」里有一行会告诉你接上没有。
+
+> 不想让它动你的 profile？在插件配置里写 `autoWire: false`，然后照上面的
+> YAML 自己接一次，效果完全一样。
+
+输入框里只有这四个档位。子代理专用模型（`steward:subagent`）仍然可用，只是不再出现在模型选择器里——它给 `dsh-tool-subagent` 用，不是给人选的模式（自己接的话，把那条 `agentOptions` 的 `provider` 写成 `steward`、`model` 写成 `steward:subagent` 即可）。
 
 ### 四个踩过的坑，务必照抄
 
@@ -280,7 +288,8 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 |---|---|---|
 | `enabled` | `true` | 关闭则完全不挂载：网关不起、面板不出现、路由不注册 |
 | `poolPath` | `$DSH_HOME/token-steward/model_pool.yaml` | 矩阵配置路径（无 `vendors.json` 时的回退来源） |
-| `gatewayPort` | `51741` | 网关端口，`0` = 系统分配 |
+| `gatewayPort` | `51741` | 网关端口，`0` = 系统分配（固定值才能写进 profile，见安装一节） |
+| `autoWire` | `true` | 启动时把网关自动写进 DSH 的模型菜单；`false` 则完全不动 profile |
 | `retainDays` | `180` | 路由台账保留天数 |
 | `usagePollMs` | `15000` | 读 dsh-usage 台账的间隔（最小 2000） |
 
@@ -330,7 +339,7 @@ model_pool.example.yaml  矩阵配置样例
 ```bash
 npm install
 npm run build      # 产出 lib/index.js 与 lib/client.js
-npm test           # 先构建，再跑全部 537 条断言
+npm test           # 先构建，再跑全部 552 条断言
 npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）
 ```
 
@@ -340,7 +349,7 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 
 ## 已知局限
 
-- **只支持 OpenAI 兼容的 `chat/completions`。** Anthropic 原生协议、Gemini 原生协议要经中转站转成 OpenAI 形状才能接入。
+- **支持 OpenAI 兼容与 Anthropic Messages 两种上游协议；Gemini 原生协议仍要经中转站转成 OpenAI 形状。**
 - **首字节之后的失败不重试。** 这是正确性优先的取舍：流式响应已经发出，重发会制造第二份副作用。
 - **缓存只服务可复现的调用。** 带 tools、带随机种子、超长 prompt 都不缓存。
 - **成本是台账与估算的合成。** 上游不返 usage 的调用只能记估算值；面板会标出来。

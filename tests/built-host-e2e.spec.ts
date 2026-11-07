@@ -251,6 +251,64 @@ test('首次安装：没有可用配置也把网关拉起来，面板照常注�
   }
 });
 
+test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'steward-built-wire-'))
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+
+  const profileDir = join(home, 'profiles', 'desktop')
+  const patchFile = join(profileDir, 'cordis.patch.yml')
+  let teardown: (() => void) | undefined
+  try {
+    await mkdir(join(home, 'token-steward'), { recursive: true })
+    await writeFile(join(home, 'token-steward', 'model_pool.yaml'), 'version: 1\nproviders: []\n')
+    await mkdir(profileDir, { recursive: true })
+    // 用户手写的 profile：有注释、有另一家上游，接线必须一字不动地留着它们。
+    await writeFile(patchFile, [
+      '# 用户自己的注释，不该被抹掉',
+      '- id: llm-pi-ai',
+      "  name: '@deepseek-ai/dsh-llm-pi-ai'",
+      '  config:',
+      '    providers:',
+      '      agnes:',
+      '        displayName: Agnes',
+      '        api: openai-completions',
+      '        baseURL: https://api.agnes-ai.cn/v1',
+      '        models:',
+      '          - id: agnes-3.0-flash',
+      '            name: agnes-3.0-flash',
+      '',
+    ].join('\n'))
+
+    const host = await loadHost()
+    await (host.apply as (ctx: unknown, config?: unknown) => Promise<void>)({
+      logger: () => ({ info: () => undefined, warn: () => undefined, error: () => undefined }),
+      webServer: { register() { return () => undefined } },
+      effect: (run: () => () => void) => { teardown = run(); return () => undefined },
+    }, {})
+
+    const text = await readFile(patchFile, 'utf8')
+    const state = JSON.parse(await readFile(join(home, 'token-steward', 'gateway.json'), 'utf8')) as {
+      baseUrl: string
+    }
+    for (const id of ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free']) {
+      assert.ok(text.includes(id), id + ' 应该被写进 profile')
+    }
+    assert.ok(text.includes('baseURL: ' + state.baseUrl), '地址要与真正在跑的网关一致')
+    assert.ok(text.includes('apiKeyEnv: STEWARD_LOCAL_TOKEN'))
+    assert.ok(text.includes('defaultMaxTokens: 65536'))
+    // 既有内容不许动。
+    assert.ok(text.includes('# 用户自己的注释'), '注释必须保留')
+    assert.ok(text.includes('agnes-3.0-flash'), '别的上游不能动')
+  } finally {
+    teardown?.()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    await rm(home, { recursive: true, force: true })
+  }
+});
+
 test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（计量不冻结）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'steward-live-usage-'))
   const previousHome = process.env.DSH_HOME
