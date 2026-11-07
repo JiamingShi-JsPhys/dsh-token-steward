@@ -17,7 +17,11 @@ export type YamlDecoder = (text: string) => unknown
 
 /** 配置加载状态；面板直接消费这个形状。 */
 export interface PoolLoadState {
-  status: 'ok' | 'rejected' | 'loading'
+  /**
+   * `empty`：配置文件不存在——首次安装的正常状态，不是错误。
+   * `rejected`：文件在、但读不了或校验不过（面板挂红条，仍用上一次有效矩阵）。
+   */
+  status: 'ok' | 'rejected' | 'loading' | 'empty'
   /** 配置来源路径，面板显示用。 */
   source: string
   /** rejected 时的可读原因（第一条诊断 + 计数）。 */
@@ -84,7 +88,9 @@ export function createPoolFileLoader(path: string, decode: YamlDecoder): PoolFil
     }
 
     if (text === undefined) {
-      state = { status: 'rejected', source: path, error: 'not found: ' + path }
+      // 文件不存在是「还没配置」，不是配置坏了：首次安装就该是这条路，
+      // 面板不该拿一条红色的 not found 吓人。
+      state = { status: 'empty', source: path }
       return { ok: false, config, state, warnings }
     }
 

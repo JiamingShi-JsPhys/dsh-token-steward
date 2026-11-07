@@ -255,6 +255,9 @@ export function bannerOf(snapshot: MatrixSnapshot): Banner | undefined {
   if (snapshot.pool.status === 'loading') {
     return { level: 'warn', text: '正在读取模型矩阵…' }
   }
+  if (snapshot.pool.status === 'empty') {
+    return { level: 'warn', text: '还没接入任何厂家：打开「管家设置 → 厂家设置」接一家，或从系统里导入已有配置' }
+  }
   // 会话 Cookie 堆积是「下一次启动直接打不开」的那种故障，所以排在计量问题前面。
   const authCookies = snapshot.authCookies ?? 0
   if (authCookies >= AUTH_COOKIE_DANGER) {

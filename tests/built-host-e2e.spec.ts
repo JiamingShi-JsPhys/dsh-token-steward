@@ -215,38 +215,42 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
   }
 });
 
-test('打包后的 Host 半区在配置损坏时不挂网关，但也不抛错', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'steward-built-bad-'))
+test('首次安装：没有可用配置也把网关拉起来，面板照常注册', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'steward-built-first-run-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
 
+  let teardown: (() => void) | undefined
   try {
     await mkdir(join(home, 'token-steward'), { recursive: true })
     await writeFile(join(home, 'token-steward', 'model_pool.yaml'), 'version: 1\nproviders: []\n')
 
     const routes: Array<{ path: string }> = []
-    const warnings: string[] = []
     const host = await loadHost()
     await (host.apply as (ctx: unknown, config?: unknown) => Promise<void>)({
-      logger: () => ({
-        info: () => undefined,
-        warn: (...args: unknown[]) => warnings.push(args.join(' ')),
-        error: (...args: unknown[]) => warnings.push(args.join(' ')),
-      }),
+      logger: () => ({ info: () => undefined, warn: () => undefined, error: () => undefined }),
       webServer: { register(route: { path: string }) { routes.push(route); return () => undefined } },
-      effect: (run: () => () => void) => { run(); return () => undefined },
+      effect: (run: () => () => void) => { teardown = run(); return () => undefined },
     }, {})
 
-    // 配置非法 → 面板仍注册（好让用户看到红条），但没有网关状态文件。
+    // 配置非法也要把网关拉起来：面板的「测试连接并拉取模型」要先能点，
+    // 否则首次安装会卡在「没配置 → 没网关 → 没法配置」的死循环里。
     assert.equal(routes.length, 10)
-    await assert.rejects(() => readFile(join(home, 'token-steward', 'gateway.json'), 'utf8'))
-    assert.ok(warnings.some((line) => line.includes('no usable model pool')))
+    const state = JSON.parse(await readFile(join(home, 'token-steward', 'gateway.json'), 'utf8')) as {
+      port: number
+      modelIds: string[]
+    }
+    assert.ok(state.port > 0)
+    assert.deepEqual(state.modelIds.slice(0, 4), ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free'])
   } finally {
+    teardown?.()
+    await new Promise((resolve) => setTimeout(resolve, 50))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
     await rm(home, { recursive: true, force: true })
   }
 });
+
 test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（计量不冻结）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'steward-live-usage-'))
   const previousHome = process.env.DSH_HOME

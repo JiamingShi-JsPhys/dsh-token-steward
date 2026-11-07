@@ -152,14 +152,16 @@ const VALID_POOL = JSON.stringify({
   }],
 })
 
-test('配置加载：文件不存在时状态是 rejected 且没有配置', async () => {
+test('配置加载：文件不存在是 empty（首次安装），不是配置被拒', async () => {
   const dir = await scratch()
   const loader = createPoolFileLoader(join(dir, 'model_pool.yaml'), tinyYaml)
   const result = await loader.load(1_000)
   assert.equal(result.ok, false)
   assert.equal(result.config, undefined)
-  assert.equal(result.state.status, 'rejected')
-  assert.ok((result.state.error ?? '').includes('not found'))
+  // 首次安装就是这个状态：文件还没生成，面板该说的是「还没接入任何厂家」，
+  // 而不是拿一条红色的 not found 吓人。
+  assert.equal(result.state.status, 'empty')
+  assert.equal(result.config, undefined)
   await rm(dir, { recursive: true, force: true })
 })
 

@@ -124,9 +124,12 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
   const status = snapshot?.pool.status ?? 'loading'
   const statusText = status === 'ok'
     ? props.t('settings.status') + ': OK'
-    : status === 'rejected'
-      ? props.t('settings.status') + ': ' + (snapshot?.pool.error ?? 'rejected')
-      : props.t('settings.status') + ': …'
+    : status === 'empty'
+      // 首次安装就是这个状态：不是故障，别拿红条吓人。
+      ? props.t('settings.status') + ': ' + props.t('settings.notConfigured')
+      : status === 'rejected'
+        ? props.t('settings.status') + ': ' + (snapshot?.pool.error ?? 'rejected')
+        : props.t('settings.status') + ': …'
 
   return (
     <section
@@ -423,10 +426,8 @@ function VendorsSection(props: {
   }
 
   async function fetchModels(tab: TabId): Promise<void> {
-    if (props.gateway === undefined) {
-      setNotice(t('vendors.noGateway'))
-      return
-    }
+    // 拉取模型是宿主进程直接向上游发请求，不经过网关；首次安装时网关还没配好
+    // 也必须能拉——否则「先有鸡还是先有蛋」，用户连一家都接不进来。
     const draft = draftOf(tab)
     setBusy(true)
     setNotice(undefined)

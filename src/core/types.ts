@@ -465,7 +465,7 @@ export interface SnapshotInput {
   usage?: UsageFacts
   /** 计量来源是否可用；false 时面板显示「计量不可用」而不是 0。 */
   usageAvailable?: boolean
-  pool?: { status: 'ok' | 'rejected' | 'loading'; source: string; error?: string }
+  pool?: { status: 'ok' | 'rejected' | 'loading' | 'empty'; source: string; error?: string }
   /** 缓存后端（sqlite | memory | off），面板展示用。 */
   cacheBackend?: string
   /** 缓存持久层报的「今日」节省；缺省时用路由引擎的进程内累计。 */
@@ -596,7 +596,7 @@ export interface MatrixSnapshot {
   retentionDays?: number
   /** 本次请求携带的网页会话 Cookie（dsh-auth-*）数量；宿主未统计时为 undefined。 */
   authCookies?: number
-  pool: { status: 'ok' | 'rejected' | 'loading'; source: string; error?: string }
+  pool: { status: 'ok' | 'rejected' | 'loading' | 'empty'; source: string; error?: string }
 }
 
 /* ────────────────────────────── 网关协议 ────────────────────────────── */

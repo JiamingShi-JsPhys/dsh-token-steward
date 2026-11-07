@@ -253,6 +253,12 @@ test('bannerOf 在加载中挂黄条', () => {
   assert.equal(bannerOf(snapshot({ pool: { status: 'loading', source: 'x' } }))?.level, 'warn')
 })
 
+test('bannerOf 在首次安装（empty）时给的是提示，不是报错', () => {
+  const banner = bannerOf(snapshot({ pool: { status: 'empty', source: 'x' } }))
+  assert.equal(banner?.level, 'warn')
+  assert.ok((banner?.text ?? '').includes('还没接入任何厂家'))
+})
+
 test('bannerOf 在计量不可用时挂黄条', () => {
   const banner = bannerOf(snapshot({ usageAvailable: false }))
   assert.equal(banner?.level, 'warn')

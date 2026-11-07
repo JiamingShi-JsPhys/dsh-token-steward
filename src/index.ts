@@ -273,9 +273,16 @@ export async function apply(ctx: {
   let configValue: PoolConfig | undefined = currentPool()
   /** 面板快照序号的宿主侧游标：重建路由时把它传给新引擎，保证只增不减。 */
   let panelRevision = 0
-  let router: StewardRouter | undefined = configValue === undefined
-    ? undefined
-    : createRouter(configValue, undefined, undefined, panelRevision)
+  /**
+   * 空矩阵：还没有任何可用配置时用它兜底。
+   *
+   * 网关必须在「一家厂商都还没接」的时候也起来——面板的「测试连接并拉取模型」
+   * 依赖宿主在跑，配置权威又只能从面板里填，否则首次安装会卡在死循环里。
+   */
+  function emptyPool(): PoolConfig {
+    return synthesizePool([], vendorDoc.mode, DEFAULT_CACHE)
+  }
+  let router: StewardRouter | undefined = createRouter(configValue ?? emptyPool(), undefined, undefined, panelRevision)
 
   /** 当前生效配置：厂家面板有内容时以 vendors.json 合成，否则回退 yaml。 */
   function currentPool(): PoolConfig | undefined {
@@ -303,7 +310,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
+    router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('vendors saved (%d configured, %d routable)', merged.length, merged.filter(vendorIsRoutable).length)
     return { ok: true }
@@ -317,7 +324,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
+    router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('vendor %s removed', vendorId)
     return { ok: true }
@@ -365,7 +372,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
+    router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('imported %d providers from DSH profiles', incoming.length)
     return { ok: true, imported: incoming.map((vendor) => vendor.vendorId) }
@@ -445,7 +452,7 @@ export async function apply(ctx: {
     usingVendors = vendorDoc.vendors.length > 0
     if (usingVendors) {
       configValue = currentPool()
-      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
+      router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
       await refreshSecrets()
       return { ok: true, status: 'ok' }
     }
@@ -560,11 +567,12 @@ export async function apply(ctx: {
       await writeFileAtomic(statePath, JSON.stringify(state, null, 2) + '\n')
       log.info('gateway ready at %s (%d models)', state.baseUrl, state.modelIds.length)
     } catch (error) {
-      // 端口占不到之类的失败：插件仍挂载，面板会显示「网关未启动」。
+      // 端口占不到之类的失败：插件仍挂载，面板的「个人网关」一栏会显示破折号。
       log.error('gateway failed to start: %s', messageOf(error))
       gateway = undefined
     }
   } else {
+    // 兜底路由恒存在（空矩阵也会建），所以这条分支理论上不可达；保险起见别让异常冒出去。
     log.warn('no usable model pool at %s; gateway not started', settings.poolPath)
   }
 
@@ -691,7 +699,7 @@ export async function apply(ctx: {
       vendorDoc = { ...vendorDoc, vendors }
       usingVendors = vendorDoc.vendors.length > 0
       configValue = currentPool()
-      router = configValue === undefined ? undefined : createRouter(configValue, undefined, router?.getMode(), panelRevision)
+      router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
       await vendorStore.save(vendorDoc)
       await refreshSecrets()
     },
