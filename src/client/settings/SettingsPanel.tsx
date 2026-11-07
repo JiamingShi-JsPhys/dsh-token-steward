@@ -145,7 +145,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
             data-dsh-part="repo-link"
             title={props.t('settings.repoHint')}
           >
-            {props.t('settings.repo')}
+            {props.t('settings.starLink')}
           </a>
           <button
             type="button"
@@ -248,15 +248,6 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
       )}
 
       <p className={css.settingsHint}>{props.t('settings.hint')}</p>
-
-      {/* 求 Star 留在插件界面里，不放在 README：README 是还没装的人看的，
-          真正每天用它的人才打得到这一页。 */}
-      <p className={css.starNote} data-dsh-part="star-note">
-        {props.t('settings.starLead')}
-        <a href={REPO_URL} target="_blank" rel="noreferrer" data-dsh-part="star-link">
-          {props.t('settings.starAction')}
-        </a>
-      </p>
     </section>
   )
 }

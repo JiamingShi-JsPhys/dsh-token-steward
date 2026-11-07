@@ -15,7 +15,7 @@ import type { PanelState, PanelStore } from '../store.ts'
 import { bannerOf } from '../../core/panel-view.ts'
 import { AgentLanes } from './AgentLanes.tsx'
 import { CostDashboard } from './CostDashboard.tsx'
-import { ModeSwitch } from './ModeSwitch.tsx'
+import { ModeBadge } from './ModeBadge.tsx'
 import { ModelGrid } from './ModelGrid.tsx'
 import { RouteMonitor } from './RouteMonitor.tsx'
 import { PanelTabs, type PanelTab } from './PanelTabs.tsx'
@@ -109,7 +109,7 @@ export function StewardPanel(props: StewardPanelProps): ReactNode {
         <div className={css.empty}>{props.state.error ?? props.t('panel.subtitle')}</div>
       ) : (
         <>
-          <ModeSwitch snapshot={snap} busy={props.state.loading} onSelect={(mode) => { void props.store.setMode(mode) }} />
+          <ModeBadge snapshot={snap} label={props.t('mode.current')} />
           <PanelTabs active={tab} onChange={setTab} t={props.t} />
           <div className={css.body} data-dsh-part="panel-body">
             {tab === 'overview' ? (
