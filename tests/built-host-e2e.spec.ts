@@ -280,16 +280,24 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
       '',
     ].join('\n'))
 
+    // 宿主凭据库的替身：DSH 的凭据层读的是启动快照，插件只能经这个入口回写。
+    const stored = new Map<string, string>()
+    const credentials = {
+      resolve: async (ref: string) => (stored.has(ref) ? { value: stored.get(ref) } : undefined),
+      set: async (ref: string, value: string) => { stored.set(ref, value) },
+    }
     const host = await loadHost()
     await (host.apply as (ctx: unknown, config?: unknown) => Promise<void>)({
       logger: () => ({ info: () => undefined, warn: () => undefined, error: () => undefined }),
       webServer: { register() { return () => undefined } },
       effect: (run: () => () => void) => { teardown = run(); return () => undefined },
+      get: (name: string) => (name === 'credentials' ? credentials : undefined),
     }, {})
 
     const text = await readFile(patchFile, 'utf8')
     const state = JSON.parse(await readFile(join(home, 'token-steward', 'gateway.json'), 'utf8')) as {
       baseUrl: string
+      token: string
     }
     for (const id of ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free']) {
       assert.ok(text.includes(id), id + ' 应该被写进 profile')
@@ -300,6 +308,8 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
     // 既有内容不许动。
     assert.ok(text.includes('# 用户自己的注释'), '注释必须保留')
     assert.ok(text.includes('agnes-3.0-flash'), '别的上游不能动')
+    // 令牌要进宿主凭据库：只写 process.env 的话，设置页永远显示「未检测到环境变量」。
+    assert.equal(stored.get('STEWARD_LOCAL_TOKEN'), state.token, '令牌应写进 credentials')
   } finally {
     teardown?.()
     await new Promise((resolve) => setTimeout(resolve, 50))

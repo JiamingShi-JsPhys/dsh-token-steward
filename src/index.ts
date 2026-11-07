@@ -446,6 +446,39 @@ export async function apply(ctx: {
     }
   }
 
+  /**
+   * 把网关令牌放进宿主自己的凭据库。
+   *
+   * 只写进程环境是不够的：DSH 的凭据层读的是**启动时的环境快照**
+   * （`launchEnvironment`），进程里后来改的 `process.env` 它根本看不见——
+   * 于是设置页一直显示「未检测到环境变量。请填写 API 密钥，或设置环境变量
+   * STEWARD_LOCAL_TOKEN」，哪怕网关明明在跑、请求打得通。
+   * `credentials.set` 是宿主公开的写入口，写进去之后 `describe()` 会报
+   * configured，设置页立刻变成「留空使用已保存凭据」。
+   */
+  async function publishTokenToHost(token: string): Promise<void> {
+    const credentials = ctx.get?.('credentials') as {
+      resolve?: (ref: string) => Promise<{ value?: string } | undefined>
+      set?: (ref: string, value: string) => Promise<unknown>
+    } | undefined
+    if (credentials === undefined || typeof credentials.set !== 'function') {
+      log.warn('credentials service is absent; the settings page may still report %s as missing', STEWARD_TOKEN_ENV)
+      return
+    }
+    try {
+      // 已经是这个值就别写：凭据库的每次 set 都会触发 reference-updated，
+      // 每次启动都无谓地改一遍文件既不优雅也没必要。
+      const current = typeof credentials.resolve === 'function'
+        ? await credentials.resolve(STEWARD_TOKEN_ENV)
+        : undefined
+      if (current?.value === token) return
+      await credentials.set(STEWARD_TOKEN_ENV, token)
+      log.info('gateway token stored under %s in the host credential store', STEWARD_TOKEN_ENV)
+    } catch (error) {
+      log.warn('cannot store the gateway token in the credential store: %s', messageOf(error))
+    }
+  }
+
   /** 网关有没有被接进 DSH 的模型菜单（面板据此提示）。 */
   let harnessWired = false
 
@@ -623,6 +656,9 @@ export async function apply(ctx: {
       // 指望用户手工 export 是不可靠的：换个启动方式（比如从另一个 shell 拉起）
       // 变量就不在了，DSH 会认为这家没有密钥，直接把「管家」从模型菜单里藏掉。
       process.env[STEWARD_TOKEN_ENV] = gateway.token()
+      // 写进宿主凭据库：进程环境对 DSH 的凭据层是不可见的（启动快照），
+      // 不写这一步设置页永远报「未检测到环境变量」。
+      await publishTokenToHost(gateway.token())
       // 第三道保障：把当前令牌写回用户环境变量。下次从任何方式启动，继承到的
       // 都是网关照认的那把钥匙，而不是某个旧版本留下的值。写入失败不影响本次运行。
       //
