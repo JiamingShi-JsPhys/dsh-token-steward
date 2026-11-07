@@ -6,15 +6,15 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.1.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 511 条
+**版本：** 1.1.1 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 536 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
 </p>
 
 <p align="center">
-  <img src="docs/images/panel.png" width="420" alt="悬浮面板：成本看板 / 模型矩阵 / 路由日志 / 代理协作四个页签">
-  <img src="docs/images/settings.png" width="300" alt="管家设置：厂家配置、模型勾选、输入输出价目">
+  <img src="docs/images/panel.png" width="380" alt="悬浮面板：成本看板 / 模型矩阵 / 路由日志 / 代理协作四个页签">
+  <img src="docs/images/settings.png" width="290" alt="管家设置：厂家配置、模型勾选、输入输出价目">
 </p>
 
 *装进 DSH 之后的实际样子：右下角一颗悬浮球显示当前档位与「今日已省」（上）；点开是四个页签，顶部只写「当前为哪一档」（左下）；厂家、密钥、价目与擅长标签在 DSH 设置页的「管家设置」里维护（右下）。*
@@ -27,7 +27,7 @@
 >
 > **密钥**：面板里粘贴的 API Key 以明文存放在 `$DSH_HOME/token-steward/vendors.json`（权限 0600，仅本机可读）。它不会进入日志、快照或任何过线 JSON，但**它不是加密存储**——和 DSH 自己的凭据文件同级对待。
 >
-> **素材**：厂商头像（`assets/avatars/`）取自 B 站 UP 主 **@zipzippipe** 的立绘作品，仅做 256×256 脸部裁切用于界面展示，版权归原作者所有。`assets/avatars/full/` 保留原图以便追溯。
+> **素材**：厂商头像（`assets/avatars/`）取自 B 站 UP 主 **@zipzippipe** 与 **@大只菠萝熊**（Claude 头像）的立绘作品，仅做 256×256 脸部裁切用于界面展示，版权归原作者所有。`assets/avatars/full/` 保留原图以便追溯。
 
 ---
 
@@ -211,13 +211,13 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
         apiKeyEnv: STEWARD_LOCAL_TOKEN
         defaultMaxTokens: 65536
         models:
-          - { id: 'steward:auto',      name: '管家·自动' }
           - { id: 'steward:frugal',    name: '管家·极致便宜' }
           - { id: 'steward:balanced',  name: '管家·效率优先' }
           - { id: 'steward:max_power', name: '管家·最强火力' }
           - { id: 'steward:free',      name: '管家·白嫖' }
-          - { id: 'steward:subagent',  name: '管家·子代理' }
 ```
+
+输入框里只有这四个档位。子代理专用模型（`steward:subagent`）仍然可用，只是不再出现在模型选择器里——它给 `dsh-tool-subagent` 用，不是给人选的模式。
 
 改完 profile 需要**重启 DSH 服务**才生效。
 
@@ -253,13 +253,13 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 
 | id | 含义 |
 |---|---|
-| `steward:auto` | 按当前全局模式选路 |
+| `steward:auto` | 按当前全局模式选路（网关仍认，只是不再出现在 profile 的模型菜单里） |
 | `steward:frugal` / `steward:balanced` / `steward:max_power` / `steward:free` | 钉死某个模式 |
 | `steward:subagent` | 子代理专用模型（不是模式）：按 agentic 质量 + 成本 + 窗口 + 并发分散选型，与当前档位无关 |
 | `steward:pin/<provider>/<model>` | 直通某个具体模型（仍走熔断与计量） |
 | `steward:alias/<name>` | `routing.aliases` 里定义的自定义意图 |
 
-也可以直接写矩阵里某个真实模型 id，网关会直通到它。输入框的模型菜单里另有中文别名：管家·自动 / 管家·极致便宜 / 管家·效率优先 / 管家·最强火力 / 管家·白嫖 / 管家·子代理。
+也可以直接写矩阵里某个真实模型 id，网关会直通到它。输入框的模型菜单里有四个中文档位：管家·极致便宜 / 管家·效率优先 / 管家·最强火力 / 管家·白嫖——面板顶部的「当前为哪一档」跟着它走。
 
 ---
 
@@ -286,14 +286,36 @@ cd ~/.dsh/profiles/desktop && pnpm add dsh-token-steward
 
 ---
 
+## 上游协议：OpenAI 兼容 与 Anthropic Messages
+
+绝大多数厂商与中转站说的是 OpenAI 那一套（`POST /chat/completions`），这也是网关对客户端唯一说的话。官方 Anthropic 端点说的是 `POST /v1/messages`，插件在宿主最边上替它翻译进退：
+
+- **判定**：地址落在 `*.anthropic.com` 上就按 Anthropic Messages 走，其余按 OpenAI 兼容。
+  界面里不提供这个开关——地址已经说明了它说哪套协议；确有特殊情况，可在 `vendors.json`
+  里给那家写 `"api": "anthropic-messages"` 覆盖。
+- **请求方向**：system 抽成 `system` 字段，`tools` / `tool_choice` / 图片 / `stop` 按 Anthropic 的
+  白名单重拼，`max_tokens` 补必填值；工具调用与工具结果各归各位。
+- **响应方向**：文本、工具调用、`stop_reason` 与 usage 一起翻回 OpenAI 形状；
+  流式把 Anthropic 的 SSE 事件转成 `chat.completion.chunk` 并以 `[DONE]` 收尾。
+- **计量与缓存不用改**：`relay` 拿到的仍是 OpenAI 形状的字节，`usage` 照常记到真实服务的那家名下。
+
+**同一模型换了写法也能认出来。** 内置目录按官方 id 写，中转站常写成 `deepseek-chat`、
+`Qwen`、`glm-flash`、`gpt-6.1-terra` 这些样子。识别顺序是精确 id → 别名 → 发版快照
+（`deepseek-v4-pro` ↔ `deepseek-v4-pro-0813`，只认日期样式的尾巴；`claude-fable-5`
+与 `claude-fable-5-1` 是两代小版本，不会被认成同一个）→ 同族（认出是 GPT 族/Claude 族/通义族）。
+前三层沿用完整档案与价目；**同族只借能力与擅长标签**，评级仍是 NA、价目仍然未知——
+那属于具体型号的事实，不借。只有真正认不出来的型号才会在设置页要求「自打标签」。
+
+---
+
 ## 仓库布局
 
 ```
 cordis.patch.yml   插件名册补丁（一行同时挂载 Host 与 Client 半区）
 lib/index.js       Host 半区（ESM），由 loader 行直接加载
 lib/client.js      Client 半区，window.__ModuleLoader__ 工厂形态，CSS 内联注入
-src/core/          纯决策：类型、目录与价格、意图推断、路由、打分器、健康状态机
-src/host/          宿主面：网关、上游转发、厂家存储、系统导入/同步、SQLite 缓存、面板路由
+src/core/          纯决策：类型、目录与价格、型号识别（别名/快照/同族）、意图推断、路由、打分器、健康状态机
+src/host/          宿主面：网关、上游转发、Anthropic 协议翻译、厂家存储、系统导入/同步、SQLite 缓存、面板路由
 src/client/        面板：悬浮球、四页签、管家设置、头像与样式
 assets/avatars/    厂商头像（256×256 脸部裁切）+ full/ 原图
 tests/             node:test 断言，零外部服务
@@ -340,5 +362,5 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 
 MIT，见 `LICENSE`。版本历史见 `CHANGELOG.md`，架构与决策记录见 `docs/architecture.md`。
 
-- 厂商头像立绘：B 站 UP 主 **@zipzippipe**，版权归原作者所有。
+- 厂商头像立绘：B 站 UP 主 **@zipzippipe**；Claude 头像：B 站 UP 主 **@大只菠萝熊**。版权归原作者所有。
 - 面板与调度器的形态参考了 DSH 社区插件（`dsh-usage`、`dsh-provider-proxy`）的公开实现与文档。

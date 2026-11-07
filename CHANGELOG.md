@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.1 — 2026-11-07
+
+### 上游型号识别：别名 / 快照 / 同族
+- 新增 `core/model-match.ts`：精确 id / 归一化 / 显示名之后，再按三层放宽——
+  手工别名表（`deepseek-chat` → DeepSeek Flash）、发版快照（`deepseek-v4-pro` ↔
+  `deepseek-v4-pro-0813`，只认日期样式的尾巴）、同族兜底
+  （只要能认出 `gpt-6.1-terra` 是 GPT 族，就沿用 GPT 的能力与擅长标签）。
+- 同族只借**能力与擅长标签**，评级仍是 NA、价目仍然未知：那是具体型号的事实。
+  小版本（`claude-fable-5` vs `claude-fable-5-1`）不是快照，不会被认成同一个，
+  也不会被改名——卡片上写的就是上游那个 id。
+- 设置页不再给这些型号弹「自打标签」输入框——中转站拉来的 GPT / Claude、
+  Westlake 那种自建端点上的 qwen / ds / glm 都能直接认出来。
+- 价目按**用户实际写的那个 id** 取（`deepseek-v4-pro` 与 `-0813` 各拿各的公开价），
+  查不到才退回认出来的那一条；输入价 / 输出价的占位与内置价目一致。
+
+### Anthropic Messages 格式兼容
+- `api` 新增 `anthropic-messages`：官方 Anthropic 端点自动按 `/v1/messages` 走，
+  中转站仍按 OpenAI 兼容。界面不显示这个开关（地址已经说明问题），确有需要可在
+  `vendors.json` 里按厂商写 `"api": "anthropic-messages"` 覆盖。
+- 新增 `host/anthropic.ts`：请求方向把 OpenAI 请求翻成 Anthropic（system 抽出、
+  tools / tool_choice / 图片 / stop 白名单拼接、max_tokens 必填）；响应方向把文本、
+  工具调用、stop_reason 与 usage 翻回来；流式用 TransformStream 把 Anthropic SSE
+  转成 `chat.completion.chunk` 并以 `[DONE]` 收尾。网关、路由、计量、缓存都不改。
+- 流式 usage 合并：`message_start` 的 input_tokens 与 `message_delta` 的
+  output_tokens 各占一半，后者覆盖前者会把输入侧的账抹成 0。
+
+### 面板与设置页
+- 输入框模型选择器只发布**四个档位**（极致便宜 / 效率优先 / 最强火力 / 白嫖）；
+  「自动」「子代理」不再是可选模式（子代理专用模型仍由网关识别，供 `tool-subagent` 用）。
+- 面板顶部只写「当前为哪一档」，并点完模型选择立刻跟着变（不再等下一轮对话）。
+- 设置页新增「个人网关」页签，与厂家设置 / 免费池 / 白嫖模式并排；页头不再常驻接线信息。
+- 切到「厂家设置」默认停在 OpenAI，切到「免费池」默认停在百度千帆（不再停在上次点过的那家）。
+- 模型卡的徽标与模型 id 并成一行；画图 / 视频 / 向量模型标「非对话」，并且真的不进对话路由。
+- 「厂家设置（含自定义）」去掉了括号；「还没选模型 · 未填密钥」与「官网 / 申请密钥」
+  并成一行；「官方：国内直连」这类一句话说明不再单独占一行。
+- 「求 Star」链接放在设置页头部，文案改为「如果你觉得好用，请给作者点个 Star」。
+
+### 素材
+- Claude 头像换成新立绘（B 站 UP 主 **@大只菠萝熊**），厂家头像从 32px 放大到 40px。
+
 
 ## 1.1.0 — 2026-11-07
 
@@ -72,8 +112,9 @@
 - README 的踩坑清单从两个坑补到四个坑（令牌一把钥匙、Cookie 堆积各一条）。
 
 ### 质量
-- 511 条断言全绿（新增子代理打分 / 粘性 / 只读预览 / 跨厂商归一化 / 虚拟 id 自述 /
-  `recommend_model` / Cookie 计数与清理边界 / 横幅阈值 / 面板透传 / 输入框模型名→档位）；
+- 536 条断言全绿（子代理打分 / 粘性 / 只读预览 / 跨厂商归一化 / 虚拟 id 自述 /
+  `recommend_model` / Cookie 计数与清理边界 / 横幅阈值 / 面板透传 / 输入框模型名→档位 /
+  型号别名·快照·同族 / Anthropic 请求与 SSE 翻译）；
   `tsc --noEmit` 零错误。
 
 

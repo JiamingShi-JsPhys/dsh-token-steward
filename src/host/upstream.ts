@@ -12,6 +12,7 @@
 import type { AttemptResult, ErrorKind, PoolConfig, ProviderEntry, ModelEntry, RouteDecision, TokenUsage } from '../core/types.ts'
 import { classifyFailure, errorMessageOf } from '../core/classify.ts'
 import { estimateInputTokens } from '../core/intent.ts'
+import { anthropicHeaders, anthropicToOpenAI, anthropicUrl, createAnthropicStream, toAnthropicBody } from './anthropic.ts'
 
 /** fetch 的最小形状；测试注入假实现，生产用全局 fetch。 */
 export type FetchLike = (input: string, init: Record<string, unknown>) => Promise<Response>
@@ -278,14 +279,23 @@ export async function attemptOnce(
       found.provider.provider_name,
       context.previousProvider,
     )
-    const response = await context.fetchImpl(upstreamUrl(found.provider), {
+    // Anthropic 形状的上游：请求体与 header 换一套，地址换成 /v1/messages。
+    const anthropic = found.provider.api === 'anthropic-messages'
+    const payload = clampOutputToWindow(outbound, found.model.context_window)
+    const response = await context.fetchImpl(anthropic ? anthropicUrl(found.provider) : upstreamUrl(found.provider), {
       method: 'POST',
-      headers: buildHeaders(found.provider, secret),
-      body: JSON.stringify(clampOutputToWindow(outbound, found.model.context_window)),
+      headers: anthropic ? anthropicHeaders(found.provider, secret) : buildHeaders(found.provider, secret),
+      body: JSON.stringify(anthropic ? toAnthropicBody(payload, found.model.id) : payload),
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
 
-    if (response.ok) return { ok: true, response, committed: false, status: response.status }
+    if (response.ok) {
+      // 客户端只认 OpenAI 形状：响应在交给 relay 之前翻回来，计量与缓存都不用改。
+      const translated = anthropic
+        ? await translateAnthropicResponse(response, context.stream, found.model.id)
+        : response
+      return { ok: true, response: translated, committed: false, status: translated.status }
+    }
 
     // 失败：读一次错误体（有界），分类后交给上层决定换谁。
     const text = await readBounded(response)
@@ -307,6 +317,32 @@ export async function attemptOnce(
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Anthropic 响应 → OpenAI 形状。
+ *
+ * 流式直接套一个 TransformStream；非流式读完 JSON 再翻。
+ * 翻不动时原样返回——让分类器按上游的原始错误去判，别在这里吞掉。
+ */
+async function translateAnthropicResponse(response: Response, stream: boolean, model: string): Promise<Response> {
+  if (stream && response.body !== null) {
+    return new Response(response.body.pipeThrough(createAnthropicStream(model)), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    })
+  }
+  const text = await response.text()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return new Response(text, { status: response.status, headers: { 'content-type': 'application/json' } })
+  }
+  return new Response(JSON.stringify(anthropicToOpenAI(parsed, model)), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
 }
 
 /** 有界读取响应体（错误体不该是无底洞）。 */

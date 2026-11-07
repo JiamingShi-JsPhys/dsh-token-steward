@@ -33,8 +33,13 @@ export type CapabilityTag =
 /** 输入模态；与 capabilities 分开：vision 标签是「能看图」，模态是「吃什么」。 */
 export type InputModality = 'text' | 'image' | 'audio' | 'file'
 
-/** 上游 API 形状；一期只支持 OpenAI 兼容，新增形状是纯增量。 */
-export type ApiShape = 'openai-completions'
+/**
+ * 上游 API 形状。
+ *  - `openai-completions`：`POST /chat/completions`，绝大多数厂商与中转站；
+ *  - `anthropic-messages`：`POST /v1/messages`（Anthropic 官方那一套），
+ *    由 `host/anthropic.ts` 在进出各翻一次，客户端看到的仍是 OpenAI 形状。
+ */
+export type ApiShape = 'openai-completions' | 'anthropic-messages'
 
 /**
  * 凭据引用，由 credentials 模块展开（纯字符串在这一层不解析）：
@@ -112,6 +117,12 @@ export interface VendorConfig {
    * 或者为了拉取模型把官网地址原样再敲一遍。缺省（老数据）按老规则回落。
    */
   endpointSource?: 'official' | 'relay'
+  /**
+   * 这家上游说哪套协议。缺省（老数据）= 自动：
+   * 地址落在 `anthropic.com` 上按 `/v1/messages` 走，其余按 OpenAI 兼容。
+   * 中转站的地址常常长得像官方，但说的又是 OpenAI 那套，所以允许显式覆盖。
+   */
+  api?: ApiShape
   apiKey: string
   /** 用户勾选启用的模型 id（来自 /v1/models 拉取或手填）。 */
   enabledModels: string[]

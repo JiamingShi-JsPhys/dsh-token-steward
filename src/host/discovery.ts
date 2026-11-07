@@ -3,7 +3,8 @@
  * Tier/名称。网关的发现端点与面板的同源代理路由共用这一份实现——
  * 浏览器跨源直调网关会被 CORS 拦截，所以面板路径必须由宿主代理。
  */
-import { findModelProfile, matchTemplateModel, PROVIDER_TEMPLATES } from '../core/provider-templates.ts'
+import { PROVIDER_TEMPLATES } from '../core/provider-templates.ts'
+import { resolveModelProfile } from '../core/model-match.ts'
 import { nodeGet } from './node-get.ts'
 import type { FetchLike } from './upstream.ts'
 
@@ -119,16 +120,18 @@ export async function discoverUpstreamModels(vendorId: string, baseUrl: string, 
   return listed.map((model) => {
     const id = model.id
     // 厂家没被收录（自定义 / 中转站）时再到全域目录里找：内置的强度跟线路无关。
-    const matched = template !== undefined ? matchTemplateModel(template, id) : findModelProfile(id)?.model
-    const known = matched
+    // 「同族」只借标签，不借名字与评级——那是具体型号的事实。
+    const matched = resolveModelProfile(id, template)
+    const known = matched !== undefined && matched.kind !== 'family' ? matched.model : undefined
     return {
       id,
       object: 'model',
       name: known?.name ?? model.name ?? id,
       tier: known?.tier ?? 'NA',
-      inCatalog: known !== undefined,
+      // 有内置档案（含同族）就不该让用户再自打标签。
+      inCatalog: matched !== undefined,
       ...(known?.strengths !== undefined ? { strengths: known.strengths } : {}),
-      ...(known?.strengthTags !== undefined ? { strength_tags: [...known.strengthTags] } : {}),
+      ...(matched?.model.strengthTags !== undefined ? { strength_tags: [...matched.model.strengthTags] } : {}),
       owned_by: 'upstream',
     }
   })

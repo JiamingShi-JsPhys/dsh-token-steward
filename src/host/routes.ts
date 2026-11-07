@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { countAuthCookies } from '../core/auth-cookies.ts'
-import type { ImportScope, ModelPrice, RoutingMode } from '../core/types.ts'
+import type { ApiShape, ImportScope, ModelPrice, RoutingMode } from '../core/types.ts'
 
 /** 面板路由前缀。 */
 export const API_PREFIX = '/api/token-steward'
@@ -67,6 +67,8 @@ export interface VendorView {
   customUrl: string
   /** 线路二选一：official（内置官网）或 relay（中转站）。 */
   endpointSource?: 'official' | 'relay'
+  /** 上游协议；缺省 = 按地址自动判断。 */
+  api?: ApiShape
   hasKey: boolean
   apiKeyMasked: string
   enabledModels: string[]

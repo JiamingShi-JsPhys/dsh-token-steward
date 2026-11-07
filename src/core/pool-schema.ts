@@ -48,7 +48,7 @@ export const AVAILABILITIES: readonly Availability[] = ['direct', 'proxy', 'offl
 
 export const ROUTING_MODES: readonly RoutingMode[] = ['frugal', 'balanced', 'max_power', 'free']
 
-export const API_SHAPES: readonly ApiShape[] = ['openai-completions']
+export const API_SHAPES: readonly ApiShape[] = ['openai-completions', 'anthropic-messages']
 
 /** 缺省值：与 docs/architecture.md 的 defaults 一节一致。 */
 export const DEFAULT_DEFAULTS: RoutingDefaults = {

@@ -191,6 +191,15 @@ score = 0.6 × agentic_quality + 0.4 × cost
 
 KV 状态迁移需要模型内部状态，公开 `chat/completions` 协议不提供，本插件不做也不宣称。
 
+### 4.6 上游协议形状（1.1.1）
+
+`ApiShape = 'openai-completions' | 'anthropic-messages'`。客户端（DSH）永远只说 OpenAI 那一套；换协议发生在 `host/upstream.ts` 的出站口：
+
+- 选形状：`apiShapeFor(vendor)` —— 显式配置优先，否则地址落在 `*.anthropic.com` 上按 `anthropic-messages`，其余按 OpenAI 兼容。中转站地址可能像官方、说的却是 OpenAI，所以 `vendors.json` 里允许按厂商覆盖。
+- 请求方向（`toAnthropicBody`）：system 抽成 `system`；tools / tool_choice / 图片 / stop 按 Anthropic 白名单重拼；`max_tokens` 补必填；同角色相邻消息合并；历史以助手开场时丢掉那一截。
+- 响应方向：非流式 `anthropicToOpenAI` 直接翻；流式 `createAnthropicStream` 是一个 `TransformStream`，把 `message_start` / `content_block_*` / `message_delta` / `message_stop` 变成 `chat.completion.chunk` 并以 `[DONE]` 收尾。
+- 计量：usage 在翻译时按 OpenAI 口径重算（缓存读写都计入 `prompt_tokens`），`relay` 与 `lastUsageFromSse` 一行不用改；流式 usage 用 `mergeUsage` 合并——`message_delta` 只带 output，覆盖会把输入抹成 0。
+
 ## 5. 计量
 
 - **token 唯一真相源是 `dsh-usage` 的台账** `$DSH_HOME/dsh-usage/usage-ledger.json`（按日/按 provider/按 model，含 input/output/cacheRead/cacheWrite/reasoning 五个桶）。本机已有真实文件，不是假想。

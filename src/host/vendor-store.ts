@@ -98,6 +98,9 @@ function coerceVendor(entry: unknown): VendorConfig | undefined {
     ...(record.endpointSource === 'official' || record.endpointSource === 'relay'
       ? { endpointSource: record.endpointSource }
       : {}),
+    ...(record.api === 'openai-completions' || record.api === 'anthropic-messages'
+      ? { api: record.api }
+      : {}),
     apiKey: stringOr(record.apiKey, ''),
     enabledModels: enabled,
     // 这两项以前被丢掉：保存后重启即丢失，AI 打的标签与用户覆盖的价目都白做。

@@ -181,9 +181,9 @@ test('没有继承令牌时只认持久化那一把，别的合法令牌照样 4
   }
 })
 
-test('publishedModelIds 总是含 6 个虚拟 id，并跳过 offline 模型', () => {
+test('publishedModelIds 只含四个可选档位，并跳过 offline 模型', () => {
   const ids = publishedModelIds(config())
-  for (const virtual of ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free', 'steward:subagent']) {
+  for (const virtual of ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free']) {
     assert.ok(ids.includes(virtual), virtual)
   }
   assert.ok(ids.includes('cheap-1'))
@@ -192,9 +192,9 @@ test('publishedModelIds 总是含 6 个虚拟 id，并跳过 offline 模型', ()
   assert.equal(publishedModelIds(withOffline).includes('cheap-1'), false)
 })
 
-test('publishedModelIds 在没有配置时仍然给出 6 个虚拟 id', () => {
+test('publishedModelIds 在没有配置时仍然给出四个档位；自动与子代理不进菜单', () => {
   assert.deepEqual(publishedModelIds(undefined), [
-    'steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free', 'steward:subagent',
+    'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free',
   ])
 })
 
@@ -207,7 +207,7 @@ test('GET /v1/models 返回全量清单', async () => {
     assert.equal(response.status, 200)
     const body = await response.json() as { object: string, data: Array<{ id: string }> }
     assert.equal(body.object, 'list')
-    assert.ok(body.data.some((entry) => entry.id === 'steward:auto'))
+    assert.ok(body.data.some((entry) => entry.id === 'steward:free'))
     assert.ok(body.data.some((entry) => entry.id === 'cheap-1'))
   })
 })
@@ -497,11 +497,16 @@ test('GET /v1/models 给虚拟 id 配上名字与擅长说明', async () => {
     const body = await response.json() as {
       data: Array<{ id: string, name?: string, strengths?: string, strength_tags?: string[] }>
     }
+    // 子代理不是可选模式：网关仍认 steward:subagent（tool-subagent 在用），
+    // 但它不再出现在模型选择器里，所以也不进这个发布清单。
     const subagent = body.data.find((entry) => entry.id === 'steward:subagent')
-    assert.ok(subagent !== undefined, '子代理档位必须出现在发布清单里')
-    assert.equal(subagent.name, '管家·子代理')
-    assert.ok((subagent.strengths ?? '').includes('子代理'))
-    assert.ok(subagent.strength_tags?.includes('subagent'))
+    assert.equal(subagent, undefined, '子代理档位不该出现在模型菜单里')
+    const auto = body.data.find((entry) => entry.id === 'steward:auto')
+    assert.equal(auto, undefined, '自动档位同样不进菜单')
+    const free = body.data.find((entry) => entry.id === 'steward:free')
+    assert.ok(free !== undefined, '四个可选档位必须都在')
+    assert.equal(typeof free.name, 'string')
+    assert.ok((free.strengths ?? '').length > 0)
   })
 })
 

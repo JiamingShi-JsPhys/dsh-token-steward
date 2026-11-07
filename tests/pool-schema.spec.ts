@@ -103,9 +103,13 @@ test('四种凭据引用写法都被接受', () => {
   }
 })
 
-test('api 只接受 openai-completions', () => {
+test('api 只接受已知的两种形状', () => {
+  const ok = minimal() as { providers: Array<Record<string, unknown>> }
+  ok.providers[0]!.api = 'anthropic-messages'
+  expectOk(ok)
+
   const bad = minimal() as { providers: Array<Record<string, unknown>> }
-  bad.providers[0]!.api = 'anthropic-messages'
+  bad.providers[0]!.api = 'grpc-v9'
   assert.deepEqual(expectFail(bad), ['providers[0].api'])
 })
 

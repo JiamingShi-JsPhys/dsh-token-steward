@@ -137,7 +137,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'deepseek',
     noRelay: true,
-    note: '深度求索官方：国内直连，不需要中转站。',
     vendorName: '深度求索 DeepSeek',
     officialUrl: 'https://api.deepseek.com/v1',
     homepage: 'https://platform.deepseek.com/api_keys',
@@ -152,7 +151,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     // 面板里的「测试连接并拉取模型」会列出账号可用的真实 id，勾选即可。
     vendorId: 'doubao',
     noRelay: true,
-    note: '火山方舟（豆包）官方端点：国内直连。',
     vendorName: '豆包 Doubao',
     officialUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     homepage: 'https://console.volcengine.com/ark',
@@ -221,7 +219,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
     // Agnes（模型清单来自本机真实 /models 探测，见 vendors.spec 同源验证）。
     vendorId: 'agnes',
     noRelay: true,
-    note: 'Agnes 官方端点。',
     vendorName: 'Agnes',
     officialUrl: 'https://api.agnes-ai.cn/v1',
     homepage: 'https://agnes-ai.cn',
@@ -244,7 +241,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'moonshot',
     noRelay: true,
-    note: '月之暗面官方：国内直连。',
     vendorName: '月之暗面 Moonshot',
     officialUrl: 'https://api.moonshot.cn/v1',
     homepage: 'https://platform.moonshot.cn/console/api-keys',
@@ -256,7 +252,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'alibaba',
     noRelay: true,
-    note: '阿里云百炼（DashScope）兼容模式端点：国内直连。',
     vendorName: '通义千问 Qwen',
     officialUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     homepage: 'https://bailian.console.aliyun.com/',
@@ -269,7 +264,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'xiaomi',
     noRelay: true,
-    note: '小米 MiMo 官方端点。',
     vendorName: '小米 Xiaomi',
     officialUrl: '',
     homepage: 'https://platform.xiaomimimo.com',
@@ -281,7 +275,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'zhipu',
     noRelay: true,
-    note: '智谱官方：GLM-4.5-Flash 等 Flash 型号长期免费。',
     vendorName: '智谱 Z.ai',
     officialUrl: 'https://open.bigmodel.cn/api/paas/v4',
     homepage: 'https://open.bigmodel.cn/usercenter/apikeys',
@@ -294,7 +287,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'minimax',
     noRelay: true,
-    note: 'MiniMax 官方端点。',
     vendorName: 'MiniMax',
     officialUrl: 'https://api.minimax.chat/v1',
     homepage: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
@@ -326,7 +318,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'tencent',
     noRelay: true,
-    note: '腾讯混元官方（OpenAI 兼容端点）。',
     vendorName: '腾讯混元 Hunyuan',
     officialUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
     homepage: 'https://console.cloud.tencent.com/hunyuan/api-key',
@@ -338,7 +329,6 @@ export const PROVIDER_TEMPLATES: readonly TemplateVendor[] = [
   {
     vendorId: 'stepfun',
     noRelay: true,
-    note: '阶跃星辰官方端点。',
     vendorName: '阶跃星辰 StepFun',
     officialUrl: 'https://api.stepfun.com/v1',
     homepage: 'https://platform.stepfun.com/interface-key',
@@ -386,11 +376,10 @@ export function matchTemplateModel(vendor: TemplateVendor, modelId: string): Tem
 }
 
 /**
- * 全局找一份内置档案：不管模型挂在哪个厂家下面。
+ * 全局找一份内置档案：不管模型挂在哪个厂家下面，只认精确/归一化/显示名三级命中。
  *
- * 自定义厂商（或中转站）里出现的型号，只要 id 能对上内置目录里的某一条，
- * 就该沿用那一份强度/擅长/价目——这些数据是内置的，跟「从哪条线路接入」无关。
- * 对不上就老老实实当未收录，绝不编。
+ * 要连别名、发版快照、同族一起认，用 `model-match.ts` 的 `resolveModelProfile`：
+ * 面板与池合成走的都是那一条，这个函数只留给「只要精确命中」的调用方。
  */
 export function findModelProfile(modelId: string): { vendor: TemplateVendor, model: TemplateModel } | undefined {
   for (const vendor of PROVIDER_TEMPLATES) {

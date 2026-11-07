@@ -4,7 +4,7 @@
  * 只用同源相对路径：宿主把 GUI 挂在可能带前缀的位置，绝对路径会跑出这个前缀。
  * 每次调用都带超时——一个卡住的 host 不该把面板也拖住。
  */
-import type { ImportScope, MatrixSnapshot, ModelPrice, RoutingMode } from '../core/types.ts'
+import type { ApiShape, ImportScope, MatrixSnapshot, ModelPrice, RoutingMode } from '../core/types.ts'
 
 /** 单次调用预算：与 dsh-usage 面板保持一致。 */
 export const PANEL_FETCH_TIMEOUT_MS = 10_000
@@ -25,6 +25,8 @@ export interface VendorView {
   customUrl: string
   /** 线路二选一：official（内置官网）或 relay（中转站）。 */
   endpointSource?: 'official' | 'relay'
+  /** 上游协议；缺省 = 按地址自动判断。 */
+  api?: ApiShape
   hasKey: boolean
   apiKeyMasked: string
   enabledModels: string[]

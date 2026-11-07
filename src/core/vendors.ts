@@ -10,6 +10,7 @@
  * 合成出的 ProviderEntry.api_key 只是占位符，永远不会被发送）。
  */
 import type {
+  ApiShape,
   CapabilityTag,
   DimensionScore,
   DimensionSet,
@@ -21,13 +22,11 @@ import type {
   VendorConfig,
 } from './types.ts'
 import {
-  matchTemplateModel,
-  templateModelToInfo,
   unknownModelInfo,
-  findModelProfile,
   PROVIDER_TEMPLATES,
   type TemplateVendor,
 } from './provider-templates.ts'
+import { modelMatchToInfo, resolveModelProfile } from './model-match.ts'
 
 /** 合成池用的缺省 defaults（yaml 高级覆盖路径不在本层）。 */
 export const SYNTH_DEFAULTS: RoutingDefaults = {
@@ -77,14 +76,21 @@ export function modelInfoToEntry(info: ModelInfo): ModelEntry {
     ...(info.imageInput === true ? { imageInput: true } : {}),
     ...(info.imageOutput === true ? { imageOutput: true } : {}),
     ...(info.videoOutput === true ? { videoOutput: true } : {}),
-    // 向量 / 重排模型不进对话路由：中转站的模型列表里它们和聊天模型长得一样。
-    ...(looksLikeNonChat(info.id) ? { chat: false } : {}),
+    // 非对话模型不进路由：中转站的模型列表里，画图的、配音的、向量 / 重排的
+    // 和聊天模型长得一模一样，选进去只会让某一轮对话莫名其妙地 400。
+    ...(looksLikeNonChat(info.id) || info.imageOutput === true || info.videoOutput === true ? { chat: false } : {}),
   }
 }
 
-/** 名字一看就知道不是对话模型：embedding / rerank。 */
+/**
+ * 名字一看就知道不是对话模型：向量 / 重排 / 画图 / 配音 / 视频。
+ *
+ * 只看名字这一层，是因为目录里还认识不到的那些型号没有 imageOutput 之类的标记；
+ * 目录认识的那些由 `modelInfoToEntry` 按 imageOutput / videoOutput 直接判。
+ */
 export function looksLikeNonChat(id: string): boolean {
-  return /embed|rerank/i.test(id)
+  return /embed|rerank|dall-?e|imagen|midjourney|flux|stable-diffusion|whisper|moderation/i.test(id)
+    || /(^|[-_/.])(image|video|veo|sora|kling|seedance|audio|speech|tts)([-_/.]|$)/i.test(id)
 }
 
 /** 每千 token 输出价 → legacy 成本档位（仅作展示与回退，六维成本才是主序）。 */
@@ -100,6 +106,27 @@ function costLevelOf(per1k: number | null): 'free' | 'low' | 'medium' | 'high' {
 export function vendorIsRoutable(vendor: VendorConfig): boolean {
   const endpoint = vendor.customUrl !== '' ? vendor.customUrl : vendor.officialUrl
   return endpoint !== '' && vendor.apiKey !== '' && vendor.enabledModels.length > 0
+}
+
+/**
+ * 这家厂商实际说哪套协议。
+ *
+ * 没显式配置时按地址猜：官方 Anthropic 端点（`*.anthropic.com`）说的是
+ * `/v1/messages`；其余一律当 OpenAI 兼容——中转站绝大多数都是这一套，
+ * 哪怕它挂着 anthropic 的名字。
+ */
+export function apiShapeFor(vendor: VendorConfig): ApiShape {
+  if (vendor.api !== undefined) return vendor.api
+  return isAnthropicHost(vendorEndpoint(vendor)) ? 'anthropic-messages' : 'openai-completions'
+}
+
+/** 地址是不是 Anthropic 官方域名。 */
+export function isAnthropicHost(endpoint: string): boolean {
+  try {
+    return /(^|\.)anthropic\.com$/i.test(new URL(endpoint).hostname)
+  } catch {
+    return /anthropic\.com/i.test(endpoint)
+  }
 }
 
 /** 展开一家厂商的最终 Base URL。 */
@@ -122,18 +149,13 @@ export function synthesizePool(vendors: VendorConfig[], mode: PoolConfig['routin
     const template = PROVIDER_TEMPLATES.find((entry) => entry.vendorId === vendor.vendorId)
     const models = vendor.enabledModels
       .map((modelId) => {
-        const known = template !== undefined ? matchTemplateModel(template, modelId) : undefined
-        // 这家没被收录（自定义 / 中转站）时，再到全域目录里找一遍：
-        // 内置的强度与擅长标签跟接入线路无关，能对上就该沿用。
-        const elsewhere = known === undefined ? findModelProfile(modelId) : undefined
+        // 认型号：先这家自己的目录，再全域目录（别名 / 快照 / 同族逐级放宽）。
+        // 内置的强度与擅长标签跟接入线路无关，能对上就该沿用；对不上才是「未收录」。
         // 目录只提供元数据（名称 / 评级 / 价目）；**id 必须用用户配置的原始写法**，
         // 因为它是真正发给上游的那个字符串。目录里的规范化 id（agnes-3-0-flash）
         // 和上游真实 id（agnes-3.0-flash）并不总是同一个，替换过去就是 400。
-        const catalogued = template !== undefined && known !== undefined
-          ? { ...templateModelToInfo(template, known), id: modelId }
-          : elsewhere !== undefined
-            ? { ...templateModelToInfo(elsewhere.vendor, elsewhere.model), id: modelId }
-            : unknownModelInfo(modelId)
+        const match = resolveModelProfile(modelId, template)
+        const catalogued = match !== undefined ? modelMatchToInfo(match, modelId) : unknownModelInfo(modelId)
         // 用户在面板里覆盖的价目优先于目录估算价。
         const override = vendor.modelPricing?.[modelId]
         const base = override === undefined ? catalogued : { ...catalogued, price: { ...override } }
@@ -160,7 +182,7 @@ export function synthesizePool(vendors: VendorConfig[], mode: PoolConfig['routin
     providers.push({
       provider_name: vendor.vendorId,
       endpoint: vendorEndpoint(vendor),
-      api: 'openai-completions',
+      api: apiShapeFor(vendor),
       api_key: VENDOR_KEY_SENTINEL + vendor.vendorId,
       headers: {},
       models,

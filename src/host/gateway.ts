@@ -256,13 +256,14 @@ export const VIRTUAL_MODEL_INFO: Record<string, { name: string, strengths: strin
 
 /** 网关对外公布的模型 id 列表：6 个虚拟 id + 矩阵里每个真实模型。 */
 export function publishedModelIds(config: PoolConfig | undefined): string[] {
+  // 只发布四个真正可选的档位。`steward:auto`（跟随全局）与 `steward:subagent`
+  // （子代理专用，由 dsh-tool-subagent 自己接线）都不是用户要选的模式，不进菜单；
+  // 网关仍按旧 id 兼容（老会话里可能还留着它们）。
   const ids = [
-    'steward:auto',
     'steward:frugal',
     'steward:balanced',
     'steward:max_power',
     'steward:free',
-    'steward:subagent',
   ]
   if (config === undefined) return ids
   for (const provider of config.providers) {

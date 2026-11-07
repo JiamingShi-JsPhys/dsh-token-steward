@@ -12,12 +12,14 @@
  *  - 草稿是本地状态，只有点保存才会落到宿主。
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { ImportScope, MatrixSnapshot, ModelPrice, RoutingMode, VendorConfig } from '../../core/types.ts'
+import type { ApiShape, ImportScope, MatrixSnapshot, ModelPrice, RoutingMode, VendorConfig } from '../../core/types.ts'
 import type { CatalogVendor, DiscoveredModel, VendorView } from '../api.ts'
 import { MODE_HINT, MODE_LABEL } from '../../core/format.ts'
-import { findModelProfile, matchTemplateModel, PROVIDER_TEMPLATES, VENDOR_TAB_ORDER } from '../../core/provider-templates.ts'
-import { isFreePriced, listPriceOf } from '../../core/pricing.ts'
+import { PROVIDER_TEMPLATES, VENDOR_TAB_ORDER } from '../../core/provider-templates.ts'
+import { resolveModelProfile, resolveModelPrice } from '../../core/model-match.ts'
+import { isFreePriced } from '../../core/pricing.ts'
 import { bundledAvatarUrl } from '../../core/avatar-assets.ts'
+import { looksLikeNonChat } from '../../core/vendors.ts'
 import css from '../steward.module.css'
 
 /** 厂家 Tab 的形态：目录厂商 + 自定义厂商 + 新建入口。 */
@@ -27,8 +29,8 @@ type TabId = string
 export const REPO_URL = 'https://github.com/JiamingShi-JsPhys/dsh-token-steward'
 
 /** 设置页的三个板块。调度模式不在这里选——它由输入框里选的模型决定。 */
-type SectionId = 'vendors' | 'free' | 'freeload'
-const SECTIONS: readonly SectionId[] = ['vendors', 'free', 'freeload']
+type SectionId = 'vendors' | 'free' | 'freeload' | 'gateway'
+const SECTIONS: readonly SectionId[] = ['vendors', 'free', 'freeload', 'gateway']
 
 /**
  * 「新建自定义厂商」入口的哨兵 id。
@@ -80,6 +82,8 @@ interface VendorDraft {
   customUrl: string
   /** 官网 / 中转站二选一（右边两个单选点）。 */
   endpointSource: 'official' | 'relay'
+  /** 上游协议；缺省 = 自动（按地址判断）。显式 undefined = 用户切回了「自动」。 */
+  api?: ApiShape | undefined
   apiKey: string
   enabledModels: string[]
   /** 用户给模型打的擅长标签（AI 调控可读）。 */
@@ -92,7 +96,7 @@ interface VendorDraft {
 export function SettingsPanel(props: SettingsPanelProps): ReactNode {
   const snapshot = props.snapshot
   const [copied, setCopied] = useState<string | undefined>(undefined)
-  /** 设置页的三个板块：厂家设置（含自定义）/ 免费池 / 白嫖模式。 */
+  /** 设置页的四个板块：厂家设置 / 免费池 / 白嫖模式 / 个人网关。 */
   const [section, setSection] = useState<SectionId>('vendors')
 
   useEffect(() => {
@@ -163,38 +167,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
         {statusText}
       </div>
 
-      <Field
-        label={props.t('settings.poolPath')}
-        value={props.poolPath}
-        hint={props.t('settings.poolPathHint')}
-        mono
-      />
-      <Field
-        label={props.t('settings.gateway')}
-        value={props.gateway === undefined ? '—' : props.gateway.baseUrl}
-        hint={props.t('settings.gatewayHint')}
-        mono
-        onCopy={props.gateway === undefined ? undefined : () => { void copyText('baseUrl', props.gateway?.baseUrl ?? '') }}
-        copyLabel={copied === 'baseUrl' ? props.t('settings.copied') : props.t('settings.copy')}
-      />
-      <Field
-        label={props.t('settings.token')}
-        value={props.gateway === undefined ? '—' : props.gateway.token}
-        hint={props.t('settings.tokenHint')}
-        mono
-        secret
-        showLabel={props.t('settings.show')}
-        hideLabel={props.t('settings.hide')}
-        onCopy={props.gateway === undefined ? undefined : () => { void copyText('token', props.gateway?.token ?? '') }}
-        copyLabel={copied === 'token' ? props.t('settings.copied') : props.t('settings.copy')}
-      />
-      <Field
-        label={props.t('settings.retainDays')}
-        value={String(props.retainDays)}
-        hint={props.t('settings.retainDaysHint')}
-      />
-
-      {/* 调度模式由输入框里选的模型决定（管家·自动 / 极致便宜 / 效率优先 / 最强火力 / 白嫖），
+      {/* 调度模式由输入框里选的模型决定（管家·极致便宜 / 效率优先 / 最强火力 / 白嫖），
           设置页不再放一排永远和真实行为对不上的按钮，只把「现在是什么模式」说清楚。 */}
       <div className={css.settingsModes}>
         <div className={css.metricLabel}>{props.t('settings.mode')}</div>
@@ -222,29 +195,69 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
         ))}
       </div>
 
-      <button
-        type="button"
-        className={css.agentEntry}
-        data-dsh-part="agent-entry"
-        onClick={() => { void copyText('agentPrompt', props.t('vendors.agentPrompt')) }}
-      >
-        ＋ {props.t('vendors.agentEntry')}
-      </button>
-      {copied === 'agentPrompt' ? <div className={css.vendorNotice}>{props.t('vendors.agentPromptCopied')}</div> : null}
+      {/* 个人网关：接线信息平时用不到（填一次就够），所以不再常驻页头，
+          和厂家设置 / 免费池 / 白嫖模式并成一排页签。 */}
+      {section === 'gateway' ? (
+        <div className={css.vendorsSection} data-dsh-part="gateway">
+          <div className={css.metricLabel}>{props.t('sections.gateway')}</div>
+          <Field
+            label={props.t('settings.poolPath')}
+            value={props.poolPath}
+            hint={props.t('settings.poolPathHint')}
+            mono
+          />
+          <Field
+            label={props.t('settings.gateway')}
+            value={props.gateway === undefined ? '—' : props.gateway.baseUrl}
+            hint={props.t('settings.gatewayHint')}
+            mono
+            onCopy={props.gateway === undefined ? undefined : () => { void copyText('baseUrl', props.gateway?.baseUrl ?? '') }}
+            copyLabel={copied === 'baseUrl' ? props.t('settings.copied') : props.t('settings.copy')}
+          />
+          <Field
+            label={props.t('settings.token')}
+            value={props.gateway === undefined ? '—' : props.gateway.token}
+            hint={props.t('settings.tokenHint')}
+            mono
+            secret
+            showLabel={props.t('settings.show')}
+            hideLabel={props.t('settings.hide')}
+            onCopy={props.gateway === undefined ? undefined : () => { void copyText('token', props.gateway?.token ?? '') }}
+            copyLabel={copied === 'token' ? props.t('settings.copied') : props.t('settings.copy')}
+          />
+          <Field
+            label={props.t('settings.retainDays')}
+            value={String(props.retainDays)}
+            hint={props.t('settings.retainDaysHint')}
+          />
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={css.agentEntry}
+            data-dsh-part="agent-entry"
+            onClick={() => { void copyText('agentPrompt', props.t('vendors.agentPrompt')) }}
+          >
+            ＋ {props.t('vendors.agentEntry')}
+          </button>
+          {copied === 'agentPrompt' ? <div className={css.vendorNotice}>{props.t('vendors.agentPromptCopied')}</div> : null}
 
-      {section === 'freeload' ? <FreeloadSection snapshot={props.snapshot} t={props.t} /> : (
-        <VendorsSection
-          gateway={props.gateway}
-          vendors={props.vendors}
-          only={section}
-          onSave={(vendors) => { props.onSaveVendors(vendors) }}
-          onDiscover={props.onDiscover}
-          onImportHarness={props.onImportHarness}
-          onSyncHarness={props.onSyncHarness}
-          onDeleteVendor={props.onDeleteVendor}
-          onRefreshVendors={props.onRefreshVendors}
-          t={props.t}
-        />
+          {section === 'freeload' ? <FreeloadSection snapshot={props.snapshot} t={props.t} /> : (
+            <VendorsSection
+              gateway={props.gateway}
+              vendors={props.vendors}
+              only={section}
+              onSave={(vendors) => { props.onSaveVendors(vendors) }}
+              onDiscover={props.onDiscover}
+              onImportHarness={props.onImportHarness}
+              onSyncHarness={props.onSyncHarness}
+              onDeleteVendor={props.onDeleteVendor}
+              onRefreshVendors={props.onRefreshVendors}
+              t={props.t}
+            />
+          )}
+        </>
       )}
 
       <p className={css.settingsHint}>{props.t('settings.hint')}</p>
@@ -333,6 +346,13 @@ function VendorsSection(props: {
   const tabs = useMemo(() => groups.flatMap((group) => group.items), [groups])
 
   const [activeTab, setActiveTab] = useState<TabId>(tabs[0] ?? NEW_TAB)
+  // 切换「厂家设置 / 免费池」时停在这一组的第一个：点进来先看到 OpenAI（免费池是
+  // 百度千帆），而不是上次随手停留的某一家。只跟着分组变化重置——tabs 每次渲染
+  // 都是新数组，放进依赖会变成每渲染一次就重置一次。
+  useEffect(() => {
+    setActiveTab(tabs[0] ?? NEW_TAB)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.only])
   const [drafts, setDrafts] = useState<Record<string, VendorDraft>>({})
   const [discovered, setDiscovered] = useState<Record<string, DiscoveredModel[]>>({})
   const [busy, setBusy] = useState(false)
@@ -367,6 +387,7 @@ function VendorsSection(props: {
       customUrl: survived,
       // 官网那一路没有地址时不能停在这边：单选点是禁用的，用户会卡在一个空的表单里。
       endpointSource: source === 'official' && officialOf === '' ? 'relay' : source,
+      ...(view?.api === undefined ? {} : { api: view.api }),
       apiKey: '',
       enabledModels: view?.enabledModels ?? [],
       modelTags: { ...(view?.modelTags ?? {}) },
@@ -513,7 +534,8 @@ function VendorsSection(props: {
       updateDraft(tab, { modelPricing: next })
       return
     }
-    const catalog = listPriceOf(modelId)
+    // 另一半留空时按内置价目补齐（认得出别名/快照的也补得上），不凭空写 0。
+    const catalog = resolveModelPrice(modelId)
     const current = next[modelId] ?? { input: catalog?.input ?? 0, output: catalog?.output ?? 0 }
     next[modelId] = { ...current, [field]: parsed }
     updateDraft(tab, { modelPricing: next })
@@ -566,6 +588,7 @@ function VendorsSection(props: {
       officialUrl: template?.officialUrl ?? savedBy.get(vendorId)?.officialUrl ?? '',
       customUrl: draft.customUrl,
       endpointSource: draft.endpointSource,
+      ...(draft.api === undefined ? {} : { api: draft.api }),
       // 空串 = 保留已存明文（掩码回显绝不回传）。
       apiKey: draft.apiKey,
       enabledModels: [...draft.enabledModels],
@@ -648,10 +671,11 @@ function VendorsSection(props: {
     (activeTab === NEW_TAB
       ? []
       : (savedBy.get(activeTab)?.pulledModels ?? []).map((entry) => {
-        const known = activeMeta !== undefined
-          ? matchTemplateModel(activeMeta, entry.id)
-          : findModelProfile(entry.id)?.model
-        return { id: entry.id, name: entry.name, tier: known?.tier ?? 'NA', inCatalog: known !== undefined }
+        // 「认得出」按同一套规则算：自家目录 → 别名 → 快照 → 同族。
+        // 同族只借标签，不借名字与评级，所以名字仍用上游给的。
+        const matched = resolveModelProfile(entry.id, activeMeta)
+        const known = matched !== undefined && matched.kind !== 'family' ? matched.model : undefined
+        return { id: entry.id, name: known?.name ?? entry.name, tier: known?.tier ?? 'NA', inCatalog: matched !== undefined }
       }))
   // 已保存的型号必须一直在列表里：勾过的 id 已经写进 vendors.json，
   // 列表里却看不到它们才是最吓人的。
@@ -662,8 +686,9 @@ function VendorsSection(props: {
   for (const id of keepListed) {
     if (!listed.has(id)) {
       listed.add(id)
-      const known = activeMeta !== undefined ? matchTemplateModel(activeMeta, id) : findModelProfile(id)?.model
-      checkList.push({ id, name: known?.name ?? id, tier: known?.tier ?? 'NA', inCatalog: known !== undefined })
+      const matched = resolveModelProfile(id, activeMeta)
+      const known = matched !== undefined && matched.kind !== 'family' ? matched.model : undefined
+      checkList.push({ id, name: known?.name ?? id, tier: known?.tier ?? 'NA', inCatalog: matched !== undefined })
     }
   }
 
@@ -721,6 +746,8 @@ function VendorsSection(props: {
 
         <div className={css.vendorPane}>
       {/* 已经加进池子的模型数 + 密钥状态：和左栏的小圆点同源，一眼看出还差什么。 */}
+      {/* 状态行与「官网 / 申请密钥」并成一行：两块都只有一个词那么长，
+          各占一行白白吃掉垂直空间。链接靠右，扫一眼就知道点哪里。 */}
       <div className={css.vendorStatus} data-dsh-part="vendor-status">
         <span className={css.vendorStatusMain}>
           {draft.enabledModels.length > 0
@@ -732,25 +759,25 @@ function VendorsSection(props: {
         <span>{savedBy.get(activeTab)?.hasKey === true
           ? t('vendors.keySaved')
           : activeMeta?.publicModels === true ? t('vendors.keyOptional') : t('vendors.keyMissing')}</span>
+        {homepageUrl === '' ? null : (
+          <a
+            className={css.vendorLink}
+            href={homepageUrl}
+            target="_blank"
+            rel="noreferrer"
+            data-dsh-part="vendor-home"
+          >
+            {t('vendors.homepage')} ↗
+          </a>
+        )}
       </div>
 
-      {/* 这家是什么、要不要 key —— 尤其是本机转发口那两家，不解释没人知道。 */}
+      {/* 只剩真正需要解释的厂家才有这句（免费池为什么免费、公开清单怎么拉）；
+          官方 / 国内直连这类一句话说明不再单独占一行。 */}
       {PROVIDER_TEMPLATES.find((vendor) => vendor.vendorId === activeTab)?.note === undefined ? null : (
         <p className={css.vendorNote} data-dsh-part="vendor-note">
           {PROVIDER_TEMPLATES.find((vendor) => vendor.vendorId === activeTab)?.note}
         </p>
-      )}
-      {/* 官网链接：申请 key 要去的地方。没有链接的话，用户搜到的大半是别人的中转站。 */}
-      {homepageUrl === '' ? null : (
-        <a
-          className={css.vendorLink}
-          href={homepageUrl}
-          target="_blank"
-          rel="noreferrer"
-          data-dsh-part="vendor-home"
-        >
-          {t('vendors.homepage')} ↗
-        </a>
       )}
       {catalog.find((vendor) => vendor.vendorId === activeTab) === undefined ? (
         <label className={css.vendorField}>
@@ -894,22 +921,28 @@ function VendorsSection(props: {
       {checkList.length > 0 ? (
         <div className={css.modelCardGrid} data-dsh-part="vendor-models">
           {checkList.map((entry) => {
-            // 标注来自本地静态目录（与宿主同源），匹配走归一化（上游 id 与目录 id 的分隔符可能不同）。
+            // 标注来自本地静态目录（与宿主同源）：精确 id → 别名 → 快照 → 同族。
             const activeTemplate = PROVIDER_TEMPLATES.find((vendor) => vendor.vendorId === activeTab)
-            // 自定义厂商没有目录节：再去全域目录里找，内置的强度/擅长照样能显示。
-            const template = activeTemplate !== undefined
-              ? matchTemplateModel(activeTemplate, entry.id)
-              : findModelProfile(entry.id)?.model
+            // 自定义厂商没有目录节：全域目录照样能认出来，内置的强度/擅长一起沿用。
+            const matched = resolveModelProfile(entry.id, activeTemplate)
+            const template = matched?.model
+            const known = matched !== undefined
             const badges: string[] = []
             if (template?.imageInput === true) badges.push(t('models.imageInput'))
             if (template?.imageOutput === true) badges.push(t('models.imageOutput'))
             if (template?.videoOutput === true) badges.push(t('models.videoOutput'))
-            const multimodal = template?.imageInput === true || template?.imageOutput === true || template?.videoOutput === true
-              || template?.capabilities.includes('vision') === true
+            // 多模态 = 能看图（输入侧）。只会画图的模型标「多模态」是错的，
+            // 它下面那枚「图出」已经把能力说清楚了。
+            const multimodal = template?.imageInput === true || template?.capabilities.includes('vision') === true
             if (multimodal) badges.unshift(t('models.multimodal'))
+            // 画图 / 视频 / 向量这类模型不进对话路由：标出来，省得用户勾了却等不到它被选中。
+            if (looksLikeNonChat(entry.id) || template?.imageOutput === true || template?.videoOutput === true) {
+              badges.push(t('models.nonChat'))
+            }
             const enabled = draft.enabledModels.includes(entry.id)
             const userTags = draft.modelTags[entry.id] ?? []
-            const catalogPrice = listPriceOf(entry.id)
+            // 价目按「用户写的这个 id」查：同一族的两个快照各拿各的公开价。
+            const catalogPrice = resolveModelPrice(entry.id)
             const price = draft.modelPricing[entry.id]
             return (
               <div key={entry.id} className={css.modelSwitchCard} data-on={enabled ? 'true' : 'false'}>
@@ -924,17 +957,22 @@ function VendorsSection(props: {
                   {/* 白嫖到底认不认这个型号，勾上就告诉你：价目 0 / 目录零价 / 名字带 free。 */}
                   {enabled && (price !== undefined
                     ? price.input === 0 && price.output === 0
-                    : isFreePriced(entry.id) || /(^|[-_.])free$/i.test(entry.id))
+                    : catalogPrice !== undefined && catalogPrice.input === 0 && catalogPrice.output === 0
+                      || /(^|[-_.])free$/i.test(entry.id))
                     ? <span className={css.modelSwitchOn} data-tone="free">{t('vendors.freeBadge')}</span>
                     : null}
                 </label>
-                {badges.length > 0 ? (
-                  <span className={css.modelCheckBadges}>
-                    {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
-                  </span>
-                ) : null}
-                <code className={css.modelCheckId}>{entry.id}</code>
-                {entry.inCatalog ? null : <input
+                {/* 徽标与模型 id 同一行：两块都只有几个字，各占一行纯属浪费高度。 */}
+                <div className={css.modelMetaRow}>
+                  {matched?.kind === 'family'
+                    ? <span className={css.chip} data-kind="state" data-family="true">{t('vendors.sameFamily')} · {matched.familyLabel ?? ''}</span>
+                    : null}
+                  {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
+                  <code className={css.modelCheckId}>{entry.id}</code>
+                </div>
+                {/* 认得出（精确 / 别名 / 快照 / 同族）就不用再自打标签：
+                    那些标签本来就在内置目录里，跟从哪条线路进来无关。 */}
+                {known ? null : <input
                   className={css.vendorInput}
                   value={userTags.join(', ')}
                   placeholder={t('vendors.tagPlaceholder')}
@@ -1031,6 +1069,7 @@ function toConfig(view: VendorView): VendorConfig {
     officialUrl: view.officialUrl,
     customUrl: view.customUrl,
     endpointSource: view.endpointSource ?? (view.customUrl !== '' ? 'relay' : 'official'),
+    ...(view.api === undefined ? {} : { api: view.api }),
     apiKey: '',
     enabledModels: [...view.enabledModels],
     ...(view.pulledModels === undefined ? {} : { pulledModels: view.pulledModels.map((model) => ({ ...model })) }),

@@ -105,7 +105,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     assert.ok(state.token.length >= 40)
     assert.deepEqual(
       state.modelIds.slice(0, 4),
-      ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power'],
+      ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free'],
     )
     assert.ok(state.modelIds.includes('cheap-1'))
     assert.ok(state.modelIds.includes('strong-1'))
@@ -119,7 +119,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     })
     assert.equal(models.status, 200)
     const list = await models.json() as { data: Array<{ id: string }> }
-    assert.ok(list.data.some((entry) => entry.id === 'steward:auto'))
+    assert.ok(list.data.some((entry) => entry.id === 'steward:free'))
 
     // 面板路由都注册了（含内置头像）。
     assert.deepEqual(routes.map((route) => route.path).sort(), [

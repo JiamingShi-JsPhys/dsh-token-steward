@@ -31,7 +31,7 @@ import { createRouteLedgerStore } from './host/ledger-store.ts'
 import { createRouter, type StewardRouter } from './core/router.ts'
 import { inferIntent } from './core/intent.ts'
 import { credentialKind, resolveCredential } from './host/credentials.ts'
-import { startGateway, STEWARD_TOKEN_ENV, type Gateway } from './host/gateway.ts'
+import { publishedModelIds, startGateway, STEWARD_TOKEN_ENV, type Gateway } from './host/gateway.ts'
 import { persistUserTokenEnv } from './host/token-env.ts'
 import { makePanelRoutes } from './host/routes.ts'
 import { readUsageProjection } from './host/usage-bridge.ts'
@@ -648,6 +648,7 @@ export async function apply(ctx: {
           officialUrl: vendor.officialUrl,
           customUrl: vendor.customUrl,
           ...(vendor.endpointSource === undefined ? {} : { endpointSource: vendor.endpointSource }),
+          ...(vendor.api === undefined ? {} : { api: vendor.api }),
           hasKey: vendor.apiKey !== '',
           apiKeyMasked: maskKey(vendor.apiKey),
           enabledModels: [...vendor.enabledModels],
@@ -813,17 +814,15 @@ export async function apply(ctx: {
   else log.warn('ctx.effect is unavailable; resources rely on process exit')
 }
 
-/** 网关公布的模型 id（与 host/gateway 的规则同源）。 */
+/**
+ * 网关发布的模型 id。
+ *
+ * 以前这里另写了一份 6 个虚拟 id 的清单，和 `host/gateway.ts` 的
+ * `publishedModelIds` 各说各话：`/v1/models` 发布 4 个，`gateway.json` 里
+ * 写着 6 个。现在统一到一处，菜单里只有四个真正可选的档位。
+ */
 function gatewayModelIds(config: PoolConfig | undefined): string[] {
-  const ids = ['steward:auto', 'steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free', 'steward:subagent']
-  if (config === undefined) return ids
-  for (const provider of config.providers) {
-    for (const model of provider.models) {
-      if (model.availability === 'offline') continue
-      ids.push(model.id)
-    }
-  }
-  return ids
+  return publishedModelIds(config)
 }
 
 /** 没有任何可用配置时的空快照，保证面板永远拿到完整形状。 */
