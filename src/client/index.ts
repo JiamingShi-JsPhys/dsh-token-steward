@@ -21,6 +21,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { createPanelClient } from './api.ts'
 import { createPanelStore, type PanelStore } from './store.ts'
 import { NS, en, zh } from './locales.ts'
+import type { RoutingMode } from '../core/types.ts'
+import { readComposerMode } from './composer-mode.ts'
 import { StewardBall } from './components/StewardBall.tsx'
 import { StewardPanel } from './components/StewardPanel.tsx'
 import { SettingsPanel } from './settings/SettingsPanel.tsx'
@@ -68,18 +70,29 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
     let container: HTMLElement | undefined
     let ticker: ReturnType<typeof setInterval> | undefined
     let now = Date.now()
+    /** 输入框里选中的管家模型对应的档位；网关只在请求到达时才知道，所以前端直接读。 */
+    let composerMode: RoutingMode | undefined
 
     function render(): ReactElement {
       const state = store.getState()
+      const displayMode = composerMode ?? state.snapshot?.mode
       return createElement('div', { 'data-dsh-plugin': 'token-steward' },
         createElement(StewardBall, {
           snapshot: state.snapshot,
+          ...(displayMode === undefined ? {} : { mode: displayMode }),
           open: state.open,
           t: translate,
           onToggle: () => { store.setOpen(!state.open) },
         }),
         state.open
-          ? createElement(StewardPanel, { state, store, t: translate, now, onClose: () => { store.setOpen(false) } })
+          ? createElement(StewardPanel, {
+            state,
+            store,
+            t: translate,
+            now,
+            ...(displayMode === undefined ? {} : { mode: displayMode }),
+            onClose: () => { store.setOpen(false) },
+          })
           : null,
       ) as ReactElement
     }
@@ -117,6 +130,17 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
       document.addEventListener('visibilitychange', onVisibility)
       draw()
 
+      // 点完模型选择就同步：每 400ms 读一次模型选择器上的字。
+      // 比 MutationObserver 便宜——对话流式输出会让 observer 疯狂触发。
+      const watchComposer = (): void => {
+        const next = readComposerMode(document)
+        if (next === composerMode) return
+        composerMode = next
+        draw()
+      }
+      const composerTimer = setInterval(watchComposer, 400)
+      watchComposer()
+
       // DSH 启动过程中会重建 <body> 的内容，插件早一步挂上去的容器会被一并带走——
       // 表现就是「重启后看不到球，直到某个状态变化让席位重新挂载」。
       // 盯着 body 的子节点：容器一旦掉线就重新挂回去，球永远在。
@@ -131,6 +155,7 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
       keepAlive?.observe(document.body, { childList: true })
 
       return () => {
+        clearInterval(composerTimer)
         keepAlive?.disconnect()
         document.removeEventListener('visibilitychange', onVisibility)
         unsubscribe()

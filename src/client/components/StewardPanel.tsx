@@ -10,7 +10,7 @@
  * 关闭即停轮询（节奏由 store 决定）。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { MatrixSnapshot } from '../../core/types.ts'
+import type { MatrixSnapshot, RoutingMode } from '../../core/types.ts'
 import type { PanelState, PanelStore } from '../store.ts'
 import { bannerOf } from '../../core/panel-view.ts'
 import { AgentLanes } from './AgentLanes.tsx'
@@ -29,6 +29,8 @@ export interface StewardPanelProps {
   onClose(): void
   /** 普通模式下的当前毫秒，由外层定时器推进，用于倒计时。 */
   now: number
+  /** 输入框里选中的档位；给了就用它，点完模型选择立刻生效。 */
+  mode?: RoutingMode
 }
 
 /** 大面板。 */
@@ -109,7 +111,7 @@ export function StewardPanel(props: StewardPanelProps): ReactNode {
         <div className={css.empty}>{props.state.error ?? props.t('panel.subtitle')}</div>
       ) : (
         <>
-          <ModeBadge snapshot={snap} label={props.t('mode.current')} />
+          <ModeBadge mode={props.mode ?? snap.mode} label={props.t('mode.current')} />
           <PanelTabs active={tab} onChange={setTab} t={props.t} />
           <div className={css.body} data-dsh-part="panel-body">
             {tab === 'overview' ? (

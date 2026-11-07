@@ -12,13 +12,15 @@
  * 不轮询：球只显示 store 里的最后一份快照，真正的节奏由面板决定。
  */
 import type { ReactNode } from 'react'
-import type { MatrixSnapshot } from '../../core/types.ts'
+import type { MatrixSnapshot, RoutingMode } from '../../core/types.ts'
 import { ballBadge } from '../../core/panel-view.ts'
 import css from '../steward.module.css'
 
 /** 悬浮球的 props。 */
 export interface StewardBallProps {
   snapshot: MatrixSnapshot | undefined
+  /** 输入框里选中的档位（优先于快照里的模式，点完模型选择立刻生效）。 */
+  mode?: RoutingMode
   open: boolean
   t(key: string): string
   onToggle(): void
@@ -26,7 +28,7 @@ export interface StewardBallProps {
 
 /** 悬浮球。 */
 export function StewardBall(props: StewardBallProps): ReactNode {
-  const tone = props.snapshot?.mode ?? 'frugal'
+  const tone = props.mode ?? props.snapshot?.mode ?? 'frugal'
   const badge = props.snapshot === undefined ? '—' : ballBadge(props.snapshot)
 
   return (

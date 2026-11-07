@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.1.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 505 条
+**版本：** 1.1.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 511 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
