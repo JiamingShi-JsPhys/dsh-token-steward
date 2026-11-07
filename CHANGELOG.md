@@ -1,57 +1,6 @@
 # Changelog
 
 
-## 1.1.2 — 2026-11-07
-
-### 修：DSH 打不开——`desktop welcome: Web authentication failed`
-
-真机故障：桌面版停在「应用无法启动或已意外停止」，崩溃日志只有一行
-`Error: desktop welcome: Web authentication failed`。排查结论是**与插件、密钥、
-账号都无关**的 DSH 自身缺陷：
-
-- 宿主每次启动都下发一枚**新名字**的 `dsh-auth-<随机>` Cookie（HttpOnly、`Path=/`、
-  30 天），却从不回收上一次的。本机实测积了 **71 枚**；
-- 浏览器每发一次请求就把它们全带上，Cookie 头越过 Node 默认的 16 KB 请求头上限；
-- 宿主对所有带凭证的请求回 **431 Request Header Fields Too Large**，桌面端
-  `connectDesktopWelcome` 拿到的不是 2xx，就抛上面那句「认证失败」。
-- 证据链：同一个宿主单独起、用 `fetch` 直连是 `303 → Set-Cookie` + `200`；
-  从应用主进程用 `net.fetch(url, {credentials:'include'})` 请求是 **431**，
-  `credentials:'omit'` 是 401——差别只在那一大串 Cookie。
-
-### 防护：面板体检 + 离线清理
-
-- `snapshot` 会数本次请求携带的 `dsh-auth-*` 数量（宿主自己收得到 Cookie 头，
-  不需要碰被 Chromium 独占的 Cookies 文件），面板据此挂横幅：
-  **≥ 40 黄条提醒、≥ 55 红条警告**「下次启动会失败」。
-- 新增 `src/core/auth-cookies.ts`（纯判定）与 `src/host/auth-cookies.ts`（离线清理）。
-- 新增命令 **`npm run repair:cookies`**：**完全退出 DSH** 后运行，先备份 Cookies 库，
-  再删掉本机 `127.0.0.1` 的 `dsh-auth-*`（别的源、别的 Cookie 一律不动）；
-  DSH 还在运行时会明确提示「打不开 Cookies 库，请先退出」，不会写出半个库。
-- 启动器 `shots/relaunch.ps1` 在拉起 DSH 前顺手清一次，失败不阻塞启动。
-- README 的踩坑清单补上这一条（三个坑 → 四个坑）。
-- 505 条断言全绿（新增 Cookie 计数、清理边界、横幅阈值、面板透传用例）。
-
-
-## 1.1.1 — 2026-11-07
-
-### 修：换过令牌后「API 密钥无效 AUTH」
-- 真机故障：系统用户环境变量 `STEWARD_LOCAL_TOKEN` 里留着旧令牌，而网关的持久化
-  令牌是新的。DSH 的 `llm-pi-ai` 可能在插件挂载之前就把 `apiKeyEnv` 读进凭据缓存，
-  插件随后再写 `process.env` 已经来不及——每个请求都被网关 401，界面显示
-  「API 密钥无效 AUTH」。
-- 三道保障：
-  1. **采用继承令牌**（`resolveStartupToken`）：环境变量是合法令牌形状就用它，
-     持久化令牌只在环境变量缺失或形状不合法时使用，`gateway.json` 随之对齐；
-  2. **漂移窗口双钥匙**：启动时两把不一致就把旧持久化令牌临时并入网关认的名单，
-     DSH 手里那把旧钥匙发来的请求也不会 401；下次启动两边一致后窗口自然关闭；
-  3. **令牌回写用户环境变量**（Windows，`src/host/token-env.ts`）：每次启动把当前
-     令牌写回 `HKCU\Environment`，下次从任何方式启动继承到的都是正确的一把。
-- 安全性不变：仍是常量时间比较；清单最多两把、都是本机用户目录里的令牌，范围仍只限回环。
-- `shots/relaunch.ps1` 启动器读取 `gateway.json` 后再导出令牌，作为第四道兜底。
-- README 的「两个踩过的坑」补上这一条与排查方式。
-- 493 条断言全绿（新增启动令牌选择、漂移窗口、令牌回写用例）。
-
-
 ## 1.1.0 — 2026-11-07
 
 ### 子代理档位 `steward:subagent`
@@ -82,9 +31,50 @@
 - 窗口不够时仍是硬拒绝（`window-too-small`），绝不悄悄截断历史。
 - 明确写进 README：跨模型 KV 状态迁移在公开协议下做不到，以上是 API 层能拿到的全部收益。
 
+### 修：换过令牌后「API 密钥无效 AUTH」
+- 真机故障：系统用户环境变量 `STEWARD_LOCAL_TOKEN` 里留着旧令牌，而网关的持久化
+  令牌是新的。DSH 的 `llm-pi-ai` 可能在插件挂载之前就把 `apiKeyEnv` 读进凭据缓存，
+  插件随后再写 `process.env` 已经来不及——每个请求都被网关 401，界面显示
+  「API 密钥无效 AUTH」。
+- 三道保障：
+  1. **采用继承令牌**（`resolveStartupToken`）：环境变量是合法令牌形状就用它，
+     持久化令牌只在环境变量缺失或形状不合法时使用，`gateway.json` 随之对齐；
+  2. **漂移窗口双钥匙**：启动时两把不一致就把旧持久化令牌临时并入网关认的名单，
+     DSH 手里那把旧钥匙发来的请求也不会 401；下次启动两边一致后窗口自然关闭；
+  3. **令牌回写用户环境变量**（Windows，`src/host/token-env.ts`）：每次启动把当前
+     令牌写回 `HKCU\Environment`，下次从任何方式启动继承到的都是正确的一把。
+- 安全性不变：仍是常量时间比较；清单最多两把、都是本机用户目录里的令牌，范围仍只限回环。
+- `shots/relaunch.ps1` 启动器读取 `gateway.json` 后再导出令牌，作为第四道兜底。
+
+### 修：DSH 打不开——`desktop welcome: Web authentication failed`
+真机故障：桌面版停在「应用无法启动或已意外停止」，崩溃日志只有一行
+`Error: desktop welcome: Web authentication failed`。排查结论是**与插件、密钥、
+账号都无关**的 DSH 自身缺陷：
+
+- 宿主每次启动都下发一枚**新名字**的 `dsh-auth-<随机>` Cookie（HttpOnly、`Path=/`、
+  30 天），却从不回收上一次的。本机实测积了 **71 枚**；
+- 浏览器每发一次请求就把它们全带上，Cookie 头越过 Node 默认的 16 KB 请求头上限；
+- 宿主对所有带凭证的请求回 **431 Request Header Fields Too Large**，桌面端
+  `connectDesktopWelcome` 拿到的不是 2xx，就抛上面那句「认证失败」。
+- 证据链：同一个宿主单独起、用 `fetch` 直连是 `303 → Set-Cookie` + `200`；
+  从应用主进程用 `net.fetch(url, {credentials:'include'})` 请求是 **431**，
+  `credentials:'omit'` 是 401——差别只在那一大串 Cookie。
+
+防护：
+- `snapshot` 会数本次请求携带的 `dsh-auth-*` 数量（宿主自己收得到 Cookie 头，
+  不需要碰被 Chromium 独占的 Cookies 文件），面板据此挂横幅：
+  **≥ 40 黄条提醒、≥ 55 红条警告**「下次启动会失败」。
+- 新增 `src/core/auth-cookies.ts`（纯判定）与 `src/host/auth-cookies.ts`（离线清理）。
+- 新增命令 **`npm run repair:cookies`**：**完全退出 DSH** 后运行，先备份 Cookies 库，
+  再删掉本机 `127.0.0.1` 的 `dsh-auth-*`（别的源、别的 Cookie 一律不动）；
+  DSH 还在运行时会明确提示「打不开 Cookies 库，请先退出」，不会写出半个库。
+- 启动器 `shots/relaunch.ps1` 在拉起 DSH 前顺手清一次，失败不阻塞启动。
+- README 的踩坑清单从两个坑补到四个坑（令牌一把钥匙、Cookie 堆积各一条）。
+
 ### 质量
-- 485 条断言全绿（新增子代理打分 / 粘性 / 只读预览 / 跨厂商归一化 / 虚拟 id 自述 /
-  `recommend_model`）；`tsc --noEmit` 零错误。
+- 505 条断言全绿（新增子代理打分 / 粘性 / 只读预览 / 跨厂商归一化 / 虚拟 id 自述 /
+  `recommend_model` / Cookie 计数与清理边界 / 横幅阈值 / 面板透传）；
+  `tsc --noEmit` 零错误。
 
 
 ## 1.0.0 — 2026-11-06

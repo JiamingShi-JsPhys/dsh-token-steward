@@ -154,7 +154,7 @@ export function looksLikeLocalToken(value: unknown): value is string {
 /**
  * 启动时选哪把令牌。
  *
- * **继承来的环境变量优先。** 这是 1.1.1 修掉的一个真机故障：DSH 的
+ * **继承来的环境变量优先。** 这是 1.1.0 修掉的一个真机故障：DSH 的
  * `llm-pi-ai` 可能在插件 apply 之前就把 `apiKeyEnv` 读进自己的凭据缓存——
  * 那时进程里只有启动时从用户环境继承的 `STEWARD_LOCAL_TOKEN`，插件随后
  * 再写 process.env 已经来不及。只要继承值与 gateway.json 漂移过一次
