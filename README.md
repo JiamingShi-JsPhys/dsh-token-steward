@@ -9,11 +9,15 @@
 **版本：** 1.1.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 505 条
 
 <p align="center">
-  <img src="docs/images/panel.png" width="560" alt="悬浮面板：顶部只显示当前档位，页签是成本看板 / 模型矩阵 / 路由日志 / 代理协作">
+  <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
+</p>
+
+<p align="center">
+  <img src="docs/images/panel.png" width="420" alt="悬浮面板：成本看板 / 模型矩阵 / 路由日志 / 代理协作四个页签">
   <img src="docs/images/settings.png" width="300" alt="管家设置：厂家配置、模型勾选、输入输出价目">
 </p>
 
-*装进 DSH 之后的样子：右下角悬浮球点开是四个页签（左）；厂家、密钥、价目与擅长标签在 DSH 设置页的「管家设置」里维护（右）。*
+*装进 DSH 之后的实际样子：右下角一颗悬浮球显示当前档位与「今日已省」（上）；点开是四个页签，顶部只写「当前为哪一档」（左下）；厂家、密钥、价目与擅长标签在 DSH 设置页的「管家设置」里维护（右下）。*
 
 ---
 
