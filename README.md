@@ -8,8 +8,9 @@
 
 **版本：** 1.1.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 505 条
 
-> **如果它帮到了你，去仓库点一颗 Star 吧** —— 作者 **[@JiamingShi-JsPhys](https://github.com/JiamingShi-JsPhys)**。
-> 一个 Star 不花什么力气，但对一个人维护的插件来说是继续修 bug、补厂商、跟进 DSH 新版本的直接动力。
+![装进 DSH 之后的管家面板：右下角悬浮球，展开是成本看板 / 模型矩阵 / 路由日志 / 代理协作四个页签](docs/images/panel.png)
+
+*装进 DSH 之后的样子：右下角悬浮球显示当前档位与「今日已省」，点开是四个页签；厂家与密钥在「管家设置」里维护。*
 
 ---
 
@@ -331,9 +332,6 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 ## 开源许可与致谢
 
 MIT，见 `LICENSE`。版本历史见 `CHANGELOG.md`，架构与决策记录见 `docs/architecture.md`。
-
-觉得好用的话，顺手给 **[@JiamingShi-JsPhys](https://github.com/JiamingShi-JsPhys)** 的仓库点颗 Star：
-<https://github.com/JiamingShi-JsPhys/dsh-token-steward>
 
 - 厂商头像立绘：B 站 UP 主 **@zipzippipe**，版权归原作者所有。
 - 面板与调度器的形态参考了 DSH 社区插件（`dsh-usage`、`dsh-provider-proxy`）的公开实现与文档。
