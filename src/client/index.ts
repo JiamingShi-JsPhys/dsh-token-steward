@@ -117,7 +117,21 @@ function mountOverlay(ctx: ClientContext, translate: (key: string) => string): v
       document.addEventListener('visibilitychange', onVisibility)
       draw()
 
+      // DSH 启动过程中会重建 <body> 的内容，插件早一步挂上去的容器会被一并带走——
+      // 表现就是「重启后看不到球，直到某个状态变化让席位重新挂载」。
+      // 盯着 body 的子节点：容器一旦掉线就重新挂回去，球永远在。
+      // 极简宿主（测试里的假 DOM）可能没有 MutationObserver，缺了就退化成不守护。
+      const keepAlive = typeof MutationObserver === 'undefined'
+        ? undefined
+        : new MutationObserver(() => {
+          if (container !== undefined && container.isConnected === false) {
+            document.body.appendChild(container)
+          }
+        })
+      keepAlive?.observe(document.body, { childList: true })
+
       return () => {
+        keepAlive?.disconnect()
         document.removeEventListener('visibilitychange', onVisibility)
         unsubscribe()
         store.stop()
