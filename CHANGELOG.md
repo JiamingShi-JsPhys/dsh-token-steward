@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.3 — 2026-11-09
+
+### 安装文档对齐现实：npm 尚未发布，GitHub 路径为正
+- README 安装节不再首推 `pnpm add dsh-token-steward`（npm 上没有这个包，404）。
+  改为两条实测可行的路径：`pnpm add https://github.com/…#v1.1.2`（有 git）或
+  Releases 的 zip 包 + `pnpm add file:<路径>`（没有 git 的机器）。
+- Releases 从 1.1.3 起附带 `dsh-token-steward-<版本>.zip`，内含预构建的
+  `lib/index.js` 与 `lib/client.js`，下载即用、无需编译。
+
 ## 1.1.2 — 2026-11-09
 
 ### 多模态：标签终于真的影响路由
