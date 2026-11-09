@@ -938,20 +938,25 @@ function VendorsSection(props: {
             const matched = resolveModelProfile(entry.id, activeTemplate)
             const template = matched?.model
             const known = matched !== undefined
+            const enabled = draft.enabledModels.includes(entry.id)
+            const userTags = draft.modelTags[entry.id] ?? []
+            // 用户手写的 `vision` 与目录里的 vision 等价：它已经写进能力标签，
+            // 路由按多模态派活，卡片当然也要标出来。
+            const visionTagged = userTags.some((tag) => tag.toLowerCase() === 'vision')
             const badges: string[] = []
             if (template?.imageInput === true) badges.push(t('models.imageInput'))
             if (template?.imageOutput === true) badges.push(t('models.imageOutput'))
             if (template?.videoOutput === true) badges.push(t('models.videoOutput'))
             // 多模态 = 能看图（输入侧）。只会画图的模型标「多模态」是错的，
             // 它下面那枚「图出」已经把能力说清楚了。
-            const multimodal = template?.imageInput === true || template?.capabilities.includes('vision') === true
+            const multimodal = template?.imageInput === true
+              || template?.capabilities.includes('vision') === true
+              || visionTagged
             if (multimodal) badges.unshift(t('models.multimodal'))
             // 画图 / 视频 / 向量这类模型不进对话路由：标出来，省得用户勾了却等不到它被选中。
             if (looksLikeNonChat(entry.id) || template?.imageOutput === true || template?.videoOutput === true) {
               badges.push(t('models.nonChat'))
             }
-            const enabled = draft.enabledModels.includes(entry.id)
-            const userTags = draft.modelTags[entry.id] ?? []
             // 价目按「用户写的这个 id」查：同一族的两个快照各拿各的公开价。
             const catalogPrice = resolveModelPrice(entry.id)
             const price = draft.modelPricing[entry.id]
@@ -979,11 +984,28 @@ function VendorsSection(props: {
                     ? <span className={css.chip} data-kind="state" data-family="true">{t('vendors.sameFamily')} · {matched.familyLabel ?? ''}</span>
                     : null}
                   {badges.map((badge) => <span key={badge} className={css.chip}>{badge}</span>)}
+                  {/* 目录认不出的型号（中转站、自建端点）能力只能靠用户说：
+                      勾上「能看图」就等于给 engine 写了一条 vision 能力。 */}
+                  <label className={css.visionToggle} data-on={visionTagged ? 'true' : 'false'} title={t('models.visionHint')}>
+                    <input
+                      type="checkbox"
+                      checked={visionTagged}
+                      onChange={(event) => {
+                        const rest = userTags.filter((tag) => tag.toLowerCase() !== 'vision')
+                        const next = event.target.checked ? [...rest, 'vision'] : rest
+                        const tags = { ...draft.modelTags }
+                        if (next.length === 0) delete tags[entry.id]
+                        else tags[entry.id] = next
+                        updateDraft(activeTab, { modelTags: tags })
+                      }}
+                    />
+                    {t('models.visionToggle')}
+                  </label>
                   <code className={css.modelCheckId}>{entry.id}</code>
                 </div>
                 {/* 认得出（精确 / 别名 / 快照 / 同族）就不用再自打标签：
                     那些标签本来就在内置目录里，跟从哪条线路进来无关。 */}
-                {known ? null : <input
+                {known && userTags.length === 0 ? null : <input
                   className={css.vendorInput}
                   value={userTags.join(', ')}
                   placeholder={t('vendors.tagPlaceholder')}

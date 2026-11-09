@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.1.1 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 552 条
+**版本：** 1.1.2 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 558 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
@@ -253,6 +253,8 @@ profile 重排坏。
 
 **让白嫖可用。** 在「免费池」里挑一家（百度千帆 / 硅基流动 / OpenRouter）拉取并勾选，或者在任意厂家把型号价目填 0。启用的零成本卡片会挂「免费·白嫖可用」徽标，切到「管家·白嫖」立刻只剩它们。
 
+**让自建端点也能看图。** 中转站和自建端点（比如 Westlake 上的 `deepseek-flash`、`glm-flash`、`Qwen`）目录里没有它们的档案，管家默认按纯文本处理，带图的请求会被硬过滤掉。每张模型卡右侧有个**「能看图」**勾选框——勾上就等于声明 `vision`：能力标签进路由、输入模态补上 `image`、卡片挂「多模态」徽标。中文标签也认（`多模态` / `看图` / `视觉`），与 `vision` 等价；`编程`、`推理`、`快速`、`工具调用` 等同理。
+
 **让 Agent 帮你改。** 直接说「把 xxx 接进来，只开三个模型，切到白嫖」，Agent 会调用 `token_steward_manage`（`show_status / recommend_model / add_or_update_vendor / set_enabled_models / tag_model / remove_vendor / set_mode`），改动走与面板完全相同的原子保存路径，立即热重载。派子代理前想先问「谁合适」，就让它调 `recommend_model`，拿到带理由的排序再决定。
 
 ---
@@ -339,7 +341,7 @@ model_pool.example.yaml  矩阵配置样例
 ```bash
 npm install
 npm run build      # 产出 lib/index.js 与 lib/client.js
-npm test           # 先构建，再跑全部 552 条断言
+npm test           # 先构建，再跑全部 558 条断言
 npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）
 ```
 

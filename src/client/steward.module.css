@@ -792,6 +792,32 @@
   min-width: 0;
 }
 
+/* 「能看图」开关：直接决定带图的请求会不会派给这个型号。 */
+.visionToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px dashed var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 3px;
+  color: var(--dsw-alias-label-secondary, #555);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.visionToggle input {
+  margin: 0;
+  width: 11px;
+  height: 11px;
+}
+
+.visionToggle[data-on='true'] {
+  border-style: solid;
+  color: var(--dsw-alias-label-primary, #222);
+}
+
 .modelMetaRow .modelCheckId {
   margin-left: auto;
   max-width: 60%;

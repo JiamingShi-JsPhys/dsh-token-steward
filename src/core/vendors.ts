@@ -44,13 +44,55 @@ export const VENDOR_KEY_SENTINEL = 'steward-vendor:'
 const DEFAULT_MAX_CONCURRENCY = 4
 
 /** ModelInfo（管家档案）→ ModelEntry（路由引擎条目）。 */
+/**
+ * 引擎认得的能力标签。
+ *
+ * 用户在面板里给模型打的标签，如果正好是这几个之一（`vision`、`tool-use` …），
+ * 它就是一条**能力声明**，必须参与路由硬过滤；其余标签只作展示与选路提示。
+ * 以前这里只写进 `strengthTags`，于是「给模型标了 vision」只改了个徽标，
+ * 带图的请求照样被 `missing-capability:vision` 拒掉——用户看到一个盘子里
+ * 明明能看图的模型，管家却说他不是多模态。
+ */
+export const CAPABILITY_TAGS: readonly CapabilityTag[] = [
+  'coding', 'reasoning', 'vision', 'fast', 'tool-use', 'long-context', 'json-mode', 'multilingual',
+]
+
+/** 这个标签是不是引擎能力（而不是纯展示标签）。 */
+export function isCapabilityTag(tag: string): tag is CapabilityTag {
+  return (CAPABILITY_TAGS as readonly string[]).includes(tag)
+}
+
+/**
+ * 标签的另一种写法 → 能力。
+ *
+ * 面板上的标签是给人打的，中文比 `vision` 自然得多（占位符里写的就是
+ * 「多模态」）。可引擎只认英文枚举，认不出来就等于没打——用户明明标了
+ * 「多模态」，带图的请求照样被拒。这里把常见叫法翻过去。
+ */
+const CAPABILITY_ALIASES: Readonly<Record<string, CapabilityTag>> = {
+  coding: 'coding', 编程: 'coding', 代码: 'coding', 写代码: 'coding',
+  reasoning: 'reasoning', 推理: 'reasoning', 思考: 'reasoning',
+  vision: 'vision', 多模态: 'vision', 看图: 'vision', 视觉: 'vision', 图像理解: 'vision',
+  fast: 'fast', 快速: 'fast', 低延迟: 'fast',
+  'tool-use': 'tool-use', 工具: 'tool-use', 工具调用: 'tool-use', 函数调用: 'tool-use',
+  'long-context': 'long-context', 长上下文: 'long-context', 长文本: 'long-context',
+  'json-mode': 'json-mode', json: 'json-mode',
+  multilingual: 'multilingual', 多语言: 'multilingual',
+}
+
+/** 把一个用户标签认成引擎能力；不是能力标签就返回 undefined。 */
+export function capabilityOf(tag: string): CapabilityTag | undefined {
+  const trimmed = tag.trim()
+  const normalized = trimmed.toLowerCase().replace(/[\s_]+/g, '-')
+  return CAPABILITY_ALIASES[normalized] ?? CAPABILITY_ALIASES[trimmed]
+}
+
 export function modelInfoToEntry(info: ModelInfo): ModelEntry {
   const scores = info.scores
   const values = (Object.values(scores) as DimensionScore[]).map((entry) => entry.score)
   const average = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
   // 引擎的 capabilities 只认识已知标签；目录里的 image_gen 等展示型标签不参与硬过滤。
-  const KNOWN: readonly CapabilityTag[] = ['coding', 'reasoning', 'vision', 'fast', 'tool-use', 'long-context', 'json-mode', 'multilingual']
-  const capabilities = info.capabilities.filter((tag: string): tag is CapabilityTag => (KNOWN as readonly string[]).includes(tag))
+  const capabilities = info.capabilities.filter((tag: string): tag is CapabilityTag => isCapabilityTag(tag))
   const price = info.price ?? null
   const priced = price !== null
   return {
@@ -159,11 +201,21 @@ export function synthesizePool(vendors: VendorConfig[], mode: PoolConfig['routin
         // 用户在面板里覆盖的价目优先于目录估算价。
         const override = vendor.modelPricing?.[modelId]
         const base = override === undefined ? catalogued : { ...catalogued, price: { ...override } }
-        // 用户在面板里给模型打的标签：与目录标签合并（去重），AI 调控可读。
-        const userTags = vendor.modelTags?.[modelId]
-        const info: ModelInfo = userTags !== undefined && userTags.length > 0
-          ? { ...base, strengthTags: [...(base.strengthTags ?? []), ...userTags.filter((tag) => !(base.strengthTags ?? []).includes(tag))] }
-          : base
+        // 用户在面板里给模型打的标签。两种含义各归各位：
+        //  - 能力型（vision / tool-use …）→ 进 capabilities，参与硬过滤与模态判定；
+        //  - 其余（「中文」「文案」…）→ 只进 strengthTags，给 AI 调控与展示看。
+        const userTags = vendor.modelTags?.[modelId] ?? []
+        const userCapabilities = userTags
+          .map((tag) => capabilityOf(tag))
+          .filter((tag): tag is CapabilityTag => tag !== undefined)
+        const info: ModelInfo = userTags.length === 0
+          ? base
+          : {
+            ...base,
+            capabilities: [...new Set([...base.capabilities, ...userCapabilities])],
+            ...(userCapabilities.includes('vision') ? { imageInput: true } : {}),
+            strengthTags: [...(base.strengthTags ?? []), ...userTags.filter((tag) => !(base.strengthTags ?? []).includes(tag))],
+          }
         const entry = modelInfoToEntry(info)
         // 目录里没有价目的型号，按两条线索推定零成本，让它进得了白嫖：
         //  - 自定义厂家（目录里根本没有这家）：用户是手动勾进来的，白嫖就该认它；
