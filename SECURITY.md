@@ -13,7 +13,7 @@ Use GitHub's private reporting: **Security → Report a vulnerability** on this 
 (`https://github.com/JiamingShi-JsPhys/dsh-token-steward/security/advisories/new`).
 
 Include the affected version, the platform (Windows / macOS / Linux), and a minimal reproduction.
-You can expect an acknowledgement within a few days. This is a single-maintainer project, so please
+You can expect an acknowledgement within about a week. This is a single-maintainer project, so please
 allow a reasonable window before public disclosure.
 
 ## How the plugin handles secrets
