@@ -337,9 +337,9 @@ export function createRouter(
         rejected.push({ provider: entry.provider.provider_name, model: entry.model.id, reason })
         continue
       }
-      // 白嫖模式：只认零成本的模型。付费模型不是「排后面」，是直接不参与——
+      // 免费档：只认零成本的模型。付费模型不是「排后面」，是直接不参与——
       // 这个模式的承诺就是绝不偷偷花钱，选不到就报错。
-      // 子代理档位也不例外：白嫖模式下派出去的子代理同样只跑免费模型。
+      // 子代理档位也不例外：免费档下派出去的子代理同样只跑免费模型。
       if (currentMode === 'free' && !isFreeModel(entry.model)) {
         rejected.push({ provider: entry.provider.provider_name, model: entry.model.id, reason: 'not-free' })
         continue

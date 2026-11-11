@@ -338,13 +338,13 @@ test('网关停掉后 refreshGateway 把接线参数清空，面板显示「—�
   assert.equal(store.getState().gateway, undefined)
 })
 
-test('保存厂家配置后快照也刷新：白嫖页不会停在旧的入池结果', async () => {
+test('保存厂家配置后快照也刷新：免费档页不会停在旧的入池结果', async () => {
   const fake = fakeClient()
   const store = createPanelStore(fake.client)
   await store.refresh()
   const before = fake.calls.snapshot
   await store.saveVendors('frugal', [])
-  assert.equal(fake.calls.snapshot, before + 1, '只刷厂家列表的话，白嫖页还是旧快照')
+  assert.equal(fake.calls.snapshot, before + 1, '只刷厂家列表的话，免费档页还是旧快照')
 })
 
 test('refreshAll 一次重读配置、网关参数与厂家列表', async () => {

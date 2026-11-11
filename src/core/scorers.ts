@@ -217,7 +217,7 @@ export const maxPowerScorer: Scorer = (model, _intent, health, context): ScoreRe
 /**
  * 零成本判定：有效价目（用户覆盖 / 目录估算）为 0 才算。
  * 未定价（null）不算免费——「不知道多少钱」和「不要钱」是两回事，
- * 白嫖模式不能把未定价的模型当成免费放进去。
+ * 免费档不能把未定价的模型当成免费放进去。
  */
 export function isFreeModel(model: ModelEntry): boolean {
   const { per1k } = costScoreOf(model)
@@ -226,7 +226,7 @@ export function isFreeModel(model: ModelEntry): boolean {
 }
 
 /**
- * 白嫖：候选在路由层已经被硬过滤成零成本，价格不再是变量，
+ * 免费档：候选在路由层已经被硬过滤成零成本，价格不再是变量，
  * 所以在剩下的免费模型里按质量挑（六维总和 + Tier + 窗口）。
  */
 export const freeScorer: Scorer = (model, intent, health, context): ScoreResult => {

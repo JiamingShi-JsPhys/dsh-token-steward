@@ -79,7 +79,7 @@ test('四个模式都有标签与解释，且顺序固定', () => {
     assert.ok(MODE_HINT[mode].length > 0)
   }
   assert.equal(MODE_LABEL.frugal, '极致便宜')
-  assert.equal(MODE_LABEL.free, '白嫖模式')
+  assert.equal(MODE_LABEL.free, '免费档')
 })
 
 test('五种健康状态都有中文标签', () => {

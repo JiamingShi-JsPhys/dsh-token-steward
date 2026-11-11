@@ -359,16 +359,16 @@ test('clampOutputToWindow：窗口够大就不动，没写 max_tokens 也不凭�
   assert.equal('max_tokens' in none, false)
 })
 
-test('白嫖模式的拒绝原因要带上「下一步该干什么」', () => {
+test('免费档的拒绝原因要带上「下一步该干什么」', () => {
   const rejected = [{ provider: 'agnes', model: 'agnes-3.0-flash', reason: 'not-free' }]
   const free = refusalMessage('free', rejected)
   assert.ok(free.includes('agnes/agnes-3.0-flash: not-free'))
-  assert.ok(free.includes('白嫖模式只跑零成本模型'))
+  assert.ok(free.includes('免费档只跑零成本模型'))
   // 别的模式不加这段：它们本来就可以用付费模型。
   assert.equal(refusalMessage('max_power', rejected), 'agnes/agnes-3.0-flash: not-free')
   // 不是「全都不免费」时也别乱贴提示。
   const mixed = refusalMessage('free', [{ provider: 'p', model: 'm', reason: 'missing-capability:vision' }])
-  assert.equal(mixed.includes('白嫖模式'), false)
+  assert.equal(mixed.includes('免费档'), false)
 })
 
 /* ─────────────────── 换模型时的上下文继续（1.1.0） ─────────────────── */

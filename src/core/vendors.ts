@@ -217,8 +217,8 @@ export function synthesizePool(vendors: VendorConfig[], mode: PoolConfig['routin
             strengthTags: [...(base.strengthTags ?? []), ...userTags.filter((tag) => !(base.strengthTags ?? []).includes(tag))],
           }
         const entry = modelInfoToEntry(info)
-        // 目录里没有价目的型号，按两条线索推定零成本，让它进得了白嫖：
-        //  - 自定义厂家（目录里根本没有这家）：用户是手动勾进来的，白嫖就该认它；
+        // 目录里没有价目的型号，按两条线索推定零成本，让它进得了免费档：
+        //  - 自定义厂家（目录里根本没有这家）：用户是手动勾进来的，免费档就该认它；
         //  - 型号名里就写着 free（`…-free`）：上游自己标的免费额度，目录没跟上而已。
         // 只推定 cost_level，不编价目——成本看板照旧记「未定价」。
         // 用户给了价目（哪怕覆盖成 0）就按用户的走，这条不再生效。

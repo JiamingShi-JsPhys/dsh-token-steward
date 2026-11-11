@@ -203,7 +203,7 @@ export const STEWARD_TOOL_PARAMETERS = {
   },
   model_id: { type: 'string', description: '要打标签的模型 id（tag_model 时必填）' },
   tags: { type: 'array', description: '擅长标签数组（tag_model 时必填），如 ["编程", "文案", "做题"]' },
-  mode: { type: 'string', description: '调度模式：frugal | balanced | max_power | free（free = 白嫖，只走零成本模型；set_mode 时必填）' },
+  mode: { type: 'string', description: '调度模式：frugal | balanced | max_power | free（free = 免费档，只走零成本模型；set_mode 时必填）' },
   task: {
     type: 'string',
     description: 'recommend_model 用：这次任务大概要干什么（一句话，如「读仓库并改一个测试」「写一篇长文」「看图」）。用于推断主维度与规模',

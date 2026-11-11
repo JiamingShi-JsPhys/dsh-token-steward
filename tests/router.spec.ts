@@ -582,7 +582,7 @@ test('友好的模型写法归一：Steward Auto → steward:auto', () => {
   assert.equal(route.mode, undefined)
 })
 
-test('白嫖模式：付费模型直接不参与，不是「排后面」', () => {
+test('免费档：付费模型直接不参与，不是「排后面」', () => {
   const config: PoolConfig = {
     ...matrix(),
     providers: [
@@ -600,7 +600,7 @@ test('白嫖模式：付费模型直接不参与，不是「排后面」', () =>
   assert.equal(result.decision.chosen.model, 'free-small')
 })
 
-test('白嫖模式：池子里没有零成本模型时如实拒绝，不退化成付费', () => {
+test('免费档：池子里没有零成本模型时如实拒绝，不退化成付费', () => {
   const config: PoolConfig = {
     ...matrix(),
     providers: [provider('relay', [model({ id: 'paid', costPer1kOutput: 0.02 })])],
@@ -613,9 +613,9 @@ test('白嫖模式：池子里没有零成本模型时如实拒绝，不退化�
   }
 })
 
-test('管家·白嫖 的中文写法能认出来，并且落到 free 模式', () => {
-  assert.equal(canonicalModelId('管家·白嫖'), 'steward:free')
-  const parsed = parseVirtualModel('管家·白嫖')
+test('管家·免费档 的中文写法能认出来，并且落到 free 模式', () => {
+  assert.equal(canonicalModelId('管家·免费档'), 'steward:free')
+  const parsed = parseVirtualModel('管家·免费档')
   assert.equal(parsed?.mode, 'free')
 })
 

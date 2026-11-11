@@ -1,7 +1,7 @@
 /**
  * 用户打的标签要真的改变路由。
  *
- * 起因：白嫖池里的三个自建端点型号（自建端点上的 deepseek-flash / glm-flash / Qwen）
+ * 起因：免费池里的三个自建端点型号（自建端点上的 deepseek-flash / glm-flash / Qwen）
  * 上游明明能看图，用户也在面板里标了「多模态」，带图的请求却一直被
  * `missing-capability:vision` 拒掉——因为标签只写进了展示用的 strengthTags，
  * 没有进引擎的 capabilities。
@@ -72,8 +72,8 @@ test('标了「多模态」的型号：capabilities 与输入模态都补上', (
   assert.ok((entry.strengthTags ?? []).includes('多模态'))
 })
 
-test('路由：白嫖档里带图请求会落到被标了 vision 的型号上', () => {
-  // 白嫖档只认零成本的型号：用户把这一家的价目填成 0（自建端点的常见用法）。
+test('路由：免费档里带图请求会落到被标了 vision 的型号上', () => {
+  // 免费档只认零成本的型号：用户把这一家的价目填成 0（自建端点的常见用法）。
   const pool = synthesizePool([vendor({
     modelTags: { 'deepseek-flash': ['vision'] },
     modelPricing: { 'deepseek-flash': { input: 0, output: 0 } },

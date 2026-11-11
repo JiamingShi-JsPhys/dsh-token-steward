@@ -130,7 +130,7 @@ test('老配置里的中文档位 id 不会在菜单里留一份重复', () => {
     '      agnes:',
     ['      steward:', '        baseURL: http://127.0.0.1:51741/v1', '        apiKeyEnv: STEWARD_LOCAL_TOKEN',
       '        models:', '          - id: 管家·极致便宜', '            name: 管家·极致便宜',
-      '          - id: 管家·白嫖', '            name: 管家·白嫖', '      agnes:'].join('\n'),
+      '          - id: 管家·免费档', '            name: 管家·免费档', '      agnes:'].join('\n'),
   )
   const text = wireStewardInText(doc, SPEC)!
   const models = (containerOf(text).steward as { models: Array<{ id: string }> }).models

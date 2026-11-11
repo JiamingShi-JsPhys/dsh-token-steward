@@ -241,7 +241,7 @@ export const VIRTUAL_MODEL_INFO: Record<string, { name: string, strengths: strin
     tags: ['max-power', 'reasoning', 'quality'],
   },
   'steward:free': {
-    name: '管家·白嫖',
+    name: '管家·免费档',
     strengths: '只走零成本型号，绝不偷偷切到付费模型；选不到就报错说明原因',
     tags: ['free', 'zero-cost'],
   },
@@ -758,7 +758,7 @@ function previousProviderOf(router: StewardRouter, intent: RouteIntent): string 
 /**
  * 拒绝原因 + 一句「下一步该干什么」。
  *
- * 白嫖模式最容易被误解：用户勾了一堆模型却全被 `not-free` 挡回来，
+ * 免费档最容易被误解：用户勾了一堆模型却全被 `not-free` 挡回来，
  * 报错里只有「agnes/agnes-3.0-flash: not-free」，看不出是**模式**在挑人。
  * 这里把该去面板做什么直接写在错误里。
  */
@@ -770,7 +770,7 @@ export function refusalMessage(
   if (mode !== 'free') return base
   const allNotFree = rejected.length > 0 && rejected.every((entry) => entry.reason === 'not-free')
   if (rejected.length > 0 && !allNotFree) return base
-  return base + '｜白嫖模式只跑零成本模型：去「厂家设置」把要用的型号价目填 0（或勾选名字带 free 的免费型号）再保存'
+  return base + '｜免费档只跑零成本模型：去「厂家设置」把要用的型号价目填 0（或勾选名字带 free 的免费型号）再保存'
 }
 
 function summarizeRefusal(rejected: Array<{ provider: string; model: string; reason: string }>): string {

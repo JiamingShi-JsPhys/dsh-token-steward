@@ -274,9 +274,9 @@ test('vendors.json 往返：拉取到的模型清单（pulledModels）重启后�
   }
 })
 
-/* ───── 自定义厂家 → 白嫖序列 ───── */
+/* ───── 自定义厂家 → 免费档序列 ───── */
 
-test('自定义厂家（目录里没有这家）的无价目型号按零成本入池，白嫖才用得上', () => {
+test('自定义厂家（目录里没有这家）的无价目型号按零成本入池，免费档才用得上', () => {
   const pool = synthesizePool([vendor({
     vendorId: 'my-hpc',
     vendorName: 'My HPC',
@@ -318,7 +318,7 @@ test('内置厂家的未收录型号不会被推定免费：那只是目录没�
   assert.notEqual(entry.cost_level, 'free')
 })
 
-test('白嫖模式真的会路由到推定的免费模型', () => {
+test('免费档真的会路由到推定的免费模型', () => {
   const config = synthesizePool([vendor({
     vendorId: 'my-hpc',
     officialUrl: 'https://hpc.example/v1',
@@ -326,12 +326,12 @@ test('白嫖模式真的会路由到推定的免费模型', () => {
   })], 'free', CACHE)
   const router = createRouter(config)
   const planned = router.plan(intent({ requiredCapabilities: [], estimatedInputTokens: 100, expectedOutputTokens: 100 }), 1_000, 'r1')
-  assert.ok(planned.ok, '白嫖应该选出这家自定义厂家的模型')
+  assert.ok(planned.ok, '免费档应该选出这家自定义厂家的模型')
   assert.equal(planned.decision.chosen.provider, 'my-hpc')
   assert.equal(planned.decision.chosen.model, 'some-internal-model')
 })
 
-test('免费池厂家拉回来的 `…-free` 型号，目录没价目也照样进白嫖', () => {
+test('免费池厂家拉回来的 `…-free` 型号，目录没价目也照样进免费档', () => {
   const pool = synthesizePool([vendor({
     vendorId: 'opencode',
     officialUrl: 'https://opencode.ai/zen/v1',

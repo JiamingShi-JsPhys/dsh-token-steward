@@ -193,7 +193,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
       const afterBody = await afterReload.json() as { snapshot: { mode: string, revision: number } }
       assert.equal(afterBody.snapshot.mode, 'max_power', '重载后应当沿用刚才的模式')
       // 重载会重建路由引擎；序号必须接着上一次往下走，否则面板客户端把它当成
-      // 迟到的旧响应丢掉，白嫖列表会一直停在重载前的入池结果。
+      // 迟到的旧响应丢掉，免费档列表会一直停在重载前的入池结果。
       assert.ok(
         afterBody.snapshot.revision > beforeReload.snapshot.revision,
         '重建路由后快照序号必须继续增长（收到 ' + String(afterBody.snapshot.revision)

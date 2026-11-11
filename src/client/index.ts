@@ -185,7 +185,7 @@ function mountSettings(ctx: ClientContext, translate: (key: string) => string): 
       const [, bump] = useReducer((n: number) => n + 1, 0)
       useEffect(() => store.subscribe(() => { bump() }), [])
       // 打开设置页就取一次最新数据：快照只在悬浮面板展开时轮询，
-      // 靠它自己更新的话，白嫖页读到的可能是很久以前的入池结果。
+      // 靠它自己更新的话，免费档页读到的可能是很久以前的入池结果。
       useEffect(() => {
         void Promise.all([store.refresh(), store.refreshVendors(), store.refreshGateway()])
       }, [])
