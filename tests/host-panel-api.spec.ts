@@ -200,7 +200,7 @@ test('请求里没有 Cookie 头时不传体检信息', async () => {
   assert.equal(seen, undefined)
 })
 
-test('mode 四个合法值都认，白嫖（free）不是例外', async () => {
+test('mode 四个合法值都认，免费档（free）不是例外', async () => {
   await withRoutes(api(), async (base) => {
     const ok = await fetch(base + API_PREFIX + '/mode', {
       method: 'POST',
@@ -367,7 +367,7 @@ test('import-harness 不带 body 时不传范围（保留整份导入这条脚�
   })
 })
 
-test('保存厂家配置时 white-list 里漏掉 free，会把白嫖悄悄改回 frugal', async () => {
+test('保存厂家配置时 white-list 里漏掉 free，会把免费档悄悄改回 frugal', async () => {
   const seen: Array<{ mode: string }> = []
   await withRoutes(api({
     saveVendors: async (mode) => {

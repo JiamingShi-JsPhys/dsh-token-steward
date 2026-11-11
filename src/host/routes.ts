@@ -160,7 +160,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
           writeJson(res, 400, { ok: false, error: 'body must be JSON' })
           return
         }
-        // 四个模式都要认：白嫖（free）是一等模式，漏掉它面板就永远切不过去。
+        // 四个模式都要认：免费档（free）是一等模式，漏掉它面板就永远切不过去。
         if (mode !== 'frugal' && mode !== 'balanced' && mode !== 'max_power' && mode !== 'free') {
           writeJson(res, 400, { ok: false, error: 'mode must be frugal | balanced | max_power | free' })
           return
@@ -389,7 +389,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
           writeJson(res, 400, { ok: false, error: 'body must be JSON' })
           return
         }
-        // 四个模式都要认：漏掉 'free' 的话，在「白嫖」下保存一次厂家配置
+        // 四个模式都要认：漏掉 'free' 的话，在「免费档」下保存一次厂家配置
         // 就会把模式悄悄改回 frugal，用户下次发请求才发现路由变了。
         const mode: RoutingMode = body.mode === 'balanced' || body.mode === 'max_power' || body.mode === 'free'
           ? body.mode

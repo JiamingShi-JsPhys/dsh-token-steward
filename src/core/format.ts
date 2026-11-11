@@ -76,7 +76,7 @@ export const MODE_LABEL: Record<RoutingMode, string> = {
   frugal: '极致便宜',
   balanced: '效率优先',
   max_power: '最强火力',
-  free: '白嫖模式',
+  free: '免费档',
 }
 
 /** 三个模式的一句解释，用作按钮 title。 */

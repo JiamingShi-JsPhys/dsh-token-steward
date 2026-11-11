@@ -177,7 +177,7 @@ score = 0.6 × agentic_quality + 0.4 × cost
 - **成本占 0.4**：搜索型子任务用顶配模型是纯浪费；但质量仍是主项。
 - **窗口加分**：子代理继承父会话的已完成轮次，长前缀是常态。
 - **burst 罚分 20000**：与 balanced 同款，一批子代理自然落到不同上游。
-- **白嫖模式仍然生效**：硬过滤在打分之前，`not-free` 的模型根本进不了候选。
+- **免费档仍然生效**：硬过滤在打分之前，`not-free` 的模型根本进不了候选。
 - 打分器由 `scorerForIntent(mode, intent)` 选择；`intent.profile === 'subagent'` 时优先于模式。
 
 `preview()` 复用同一条 `rankAll()` 流水线但不动运行时状态，供 Agent 工具 `recommend_model` 与面板解释使用。

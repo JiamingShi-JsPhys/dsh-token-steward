@@ -204,7 +204,7 @@ export interface ModelEntry {
   costPer1kOutput?: number | null
   /**
    * 零成本是「推定」的：自定义厂家目录里没有，型号也就没有价目。
-   * 用户既然把它勾进来，白嫖模式就认它；成本看板仍按未定价记账，不编数字。
+   * 用户既然把它勾进来，免费档就认它；成本看板仍按未定价记账，不编数字。
    */
   freeAssumed?: boolean
   strengths?: string

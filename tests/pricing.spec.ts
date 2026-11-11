@@ -82,7 +82,7 @@ test('Agnes 只有 2.0 / 3.0 flash 免费，其余档位照常计费', () => {
   assert.equal(isFreePriced('agnes-3.0-flash'), true)
   assert.equal(isFreePriced('agnes-2.0-flash'), true)
   assert.deepEqual(listPriceOf('agnes-3.0-flash'), { input: 0, output: 0 })
-  // 别把整家标成 0：白嫖会照着价目真去调付费型号。
+  // 别把整家标成 0：免费档会照着价目真去调付费型号。
   assert.equal(isFreePriced('agnes-2.5-pro'), false)
   assert.equal(isFreePriced('agnes-2.5-flash'), false)
   // 缺数据的型号仍然返回 undefined，别把「不知道」当成「免费」。

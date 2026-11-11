@@ -29,7 +29,7 @@ export const STEWARD_WIRE_MODELS: ReadonlyArray<{ id: string, name: string }> = 
   { id: 'steward:frugal', name: '管家·极致便宜' },
   { id: 'steward:balanced', name: '管家·效率优先' },
   { id: 'steward:max_power', name: '管家·最强火力' },
-  { id: 'steward:free', name: '管家·白嫖' },
+  { id: 'steward:free', name: '管家·免费档' },
 ]
 
 /** 写进 profile 的接线参数。 */

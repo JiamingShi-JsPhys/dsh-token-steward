@@ -76,7 +76,7 @@ export const LIST_PRICES: Readonly<Record<string, ModelPrice>> = {
   'doubao-1-5-pro-32k': { input: 0.3, output: 0.9 },
   'doubao-1-5-lite-32k': { input: 0.08, output: 0.3 },
   // Agnes —— 免费只覆盖 2.0 flash 与 3.0 flash 两档（2026-06 起无限期免费），
-  // 其余档位照常计费。别把整家都标成 0：白嫖会照着这个价目真去调付费型号。
+  // 其余档位照常计费。别把整家都标成 0：免费档会照着这个价目真去调付费型号。
   'agnes-2-0-flash': { input: 0, output: 0 },
   'agnes-3-0-flash': { input: 0, output: 0 },
   'agnes-2-5-pro': { input: 0.6, output: 2.4 },
@@ -149,7 +149,7 @@ export const LIST_PRICES: Readonly<Record<string, ModelPrice>> = {
 
 /**
  * 查价：上游真实 id（`agnes-3.0-flash`）与价目表的键（`agnes-3-0-flash`）写法不同，
- * 直接查会全部落空——白嫖的「免费」判定、面板的自动勾选都靠这一步，必须归一。
+ * 直接查会全部落空——免费档的「免费」判定、面板的自动勾选都靠这一步，必须归一。
  * 只做最小归一（小写 + 点转横线），不学 matchTemplateModel 那套激进匹配：
  * 价目算错比查不到更糟。
  */
@@ -164,7 +164,7 @@ export function listPriceOf(modelId: string): ModelPrice | undefined {
  * 这个模型在价目表里是不是零成本（输入输出都是 0）。
  *
  * 只认「明确写了 0」的条目；查不到价格的是未知，不是免费——
- * 白嫖模式绝不能把「不知道多少钱」当成「不要钱」。
+ * 免费档绝不能把「不知道多少钱」当成「不要钱」。
  */
 export function isFreePriced(modelId: string): boolean {
   const price = listPriceOf(modelId)

@@ -204,9 +204,9 @@ export function createPanelStore(client: PanelClient): PanelStore {
   /**
    * 保存 / 导入 / 删除之后同时重取厂家列表与快照。
    *
-   * 只刷厂家列表是不够的：白嫖页与模型卡片读的是快照（路由引擎里真正入池的
+   * 只刷厂家列表是不够的：免费档页与模型卡片读的是快照（路由引擎里真正入池的
    * 型号），悬浮面板没展开时快照根本不轮询——用户刚把价目改成 0、卡片上也挂了
-   * 「白嫖可用」，切到白嫖页却一个都没有，就是一例。
+   * 「免费可用」，切到免费档页却一个都没有，就是一例。
    */
   async function refreshAfterMutation(): Promise<void> {
     await Promise.all([refreshVendors(), refresh()])

@@ -361,7 +361,7 @@ export async function apply(ctx: {
    * 只读 `llm-pi-ai` 的 providers，跳过我们自己的 steward 网关。
    *
    * `scope` 来自面板：用户停在哪家就只拉哪家。不传才是整份导入——profile 里
-   * 上游一多，一次全搬会把几十上百个模型一起塞进白嫖池，没人想要那个。
+   * 上游一多，一次全搬会把几十上百个模型一起塞进免费池，没人想要那个。
    */
   async function importFromHarness(scope?: ImportScope): Promise<{ ok: boolean, imported: string[], error?: string }> {
     const files = await harnessPatchFiles()
@@ -881,7 +881,7 @@ export async function apply(ctx: {
           '2. 接厂商：action=add_or_update_vendor，给 vendor_id / base_url / api_key（推荐 env:NAME 引用）/ enabled_models；',
           '3. 勾模型：action=set_enabled_models；',
           '4. 打标签：action=tag_model，标签用简单能力词（编程 / 文案 / 视频 / 做题 / 推理 / 多模态 / 快速 / 前端 …）；',
-          '5. 切模式：action=set_mode（frugal=满足硬过滤的 C/D 级里最便宜；balanced=任务维度须达 A/A+ 再看成本；max_power=六维总和最高；free=白嫖）。',
+          '5. 切模式：action=set_mode（frugal=满足硬过滤的 C/D 级里最便宜；balanced=任务维度须达 A/A+ 再看成本；max_power=六维总和最高；free=免费档）。',
           '',
           '要派子代理（sub agent）时：先用 action=recommend_model + profile=subagent + task="<一句话任务>"',
           '拿到按 agentic 能力、成本、上下文窗口与并发分散排序的候选，再决定派哪个模型；',

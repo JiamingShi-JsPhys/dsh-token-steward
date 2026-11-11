@@ -71,8 +71,8 @@ const CHINESE_IDS: Record<string, string> = {
   管家极致便宜: 'steward:frugal',
   管家效率优先: 'steward:balanced',
   管家最强火力: 'steward:max_power',
-  管家白嫖: 'steward:free',
-  管家白嫖模式: 'steward:free',
+  管家免费档: 'steward:free',
+  管家免费档模式: 'steward:free',
   管家子代理: 'steward:subagent',
   管家子代理模式: 'steward:subagent',
 }

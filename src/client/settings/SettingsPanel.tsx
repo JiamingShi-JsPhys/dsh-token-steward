@@ -55,7 +55,7 @@ export interface SettingsPanelProps {
   onReload(): void
   /** 设置页的「刷新」：配置、网关参数、厂家列表一起重取。 */
   onRefreshAll?: () => void
-  /** 重取快照与厂家列表（切到白嫖页时用：白嫖读的是快照，不重取就是旧的入池结果）。 */
+  /** 重取快照与厂家列表（切到免费档页时用：免费档读的是快照，不重取就是旧的入池结果）。 */
   onRefreshData?: () => void
   /** 只重拉厂家列表：打开设置时同步一次，别的地方（Agent 工具）改了配置也能看见。 */
   onRefreshVendors?: () => void
@@ -96,7 +96,7 @@ interface VendorDraft {
 export function SettingsPanel(props: SettingsPanelProps): ReactNode {
   const snapshot = props.snapshot
   const [copied, setCopied] = useState<string | undefined>(undefined)
-  /** 设置页的四个板块：厂家设置 / 免费池 / 白嫖模式 / 个人网关。 */
+  /** 设置页的四个板块：厂家设置 / 免费池 / 免费档 / 个人网关。 */
   const [section, setSection] = useState<SectionId>('vendors')
 
   useEffect(() => {
@@ -105,7 +105,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
     return () => { clearTimeout(timer) }
   }, [copied])
 
-  // 切到白嫖页时重取一次快照：这一页列的是「路由引擎里真正入池的零成本型号」，
+  // 切到免费档页时重取一次快照：这一页列的是「路由引擎里真正入池的零成本型号」，
   // 而快照只在悬浮面板展开时轮询——不重取的话，刚保存的型号要等面板打开才出现。
   useEffect(() => {
     if (section === 'freeload') props.onRefreshData?.()
@@ -170,7 +170,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
         {statusText}
       </div>
 
-      {/* 调度模式由输入框里选的模型决定（管家·极致便宜 / 效率优先 / 最强火力 / 白嫖），
+      {/* 调度模式由输入框里选的模型决定（管家·极致便宜 / 效率优先 / 最强火力 / 免费档），
           设置页不再放一排永远和真实行为对不上的按钮，只把「现在是什么模式」说清楚。 */}
       <div className={css.settingsModes}>
         <div className={css.metricLabel}>{props.t('settings.mode')}</div>
@@ -199,7 +199,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
       </div>
 
       {/* 个人网关：接线信息平时用不到（填一次就够），所以不再常驻页头，
-          和厂家设置 / 免费池 / 白嫖模式并成一排页签。 */}
+          和厂家设置 / 免费池 / 免费档并成一排页签。 */}
       {section === 'gateway' ? (
         <div className={css.vendorsSection} data-dsh-part="gateway">
           <div className={css.metricLabel}>{props.t('sections.gateway')}</div>
@@ -278,12 +278,12 @@ export function SettingsPanel(props: SettingsPanelProps): ReactNode {
   )
 }
 
-// ── 白嫖模式 ────────────────────────────────────────────────────────
+// ── 免费档 ────────────────────────────────────────────────────────
 
 /**
- * 白嫖模式：只走零成本模型的那一档。
+ * 免费档：只走零成本模型的那一档。
  *
- * 它不是「另一个调度模式按钮」，而是输入框里一个可选模型（管家·白嫖）。
+ * 它不是「另一个调度模式按钮」，而是输入框里一个可选模型（管家·免费档）。
  * 这里做两件事：说清楚它是什么，以及现在到底有哪些模型会被它用上——
  * 池子里一个零成本的都没有时，用户必须能立刻看出问题在哪。
  */
@@ -452,7 +452,7 @@ function VendorsSection(props: {
       const discoveredModels = await props.onDiscover(params)
       setDiscovered((previous) => ({ ...previous, [tab]: discoveredModels }))
       // 拉取只负责「列出来」，**不**顺手把整份清单都勾上：上游动不动几十上百个模型，
-      // 一次全勾会把路由池和模型菜单一起撑爆。只自动勾零成本模型——它们本来就该进白嫖，
+      // 一次全勾会把路由池和模型菜单一起撑爆。只自动勾零成本模型——它们本来就该进免费档，
       // 用户不用再一个个点。用户主动取消勾选的零成本模型不该被重新勾回来。
       if (tab !== NEW_TAB) {
         const freeIds = discoveredModels
@@ -613,7 +613,7 @@ function VendorsSection(props: {
     const others = saved.filter((entry) => entry.vendorId !== vendorId).map((entry) => toConfig(entry))
     const next = [...others, config]
     props.onSave(next.map((entry) => (entry.vendorId === vendorId ? { ...entry, apiKey: draft.apiKey } : entry)))
-    // 白嫖模式最怕「改完不知道它还认不认」：保存时直接把结果说出来。
+    // 免费档最怕「改完不知道它还认不认」：保存时直接把结果说出来。
     if (mode === 'free') {
       setNotice(t('vendors.savedFree').replace('{n}', String(countZeroCost(next))))
     }
@@ -970,7 +970,7 @@ function VendorsSection(props: {
                   />
                   <span className={css.modelSwitchName}>{entry.name}</span>
                   {enabled ? <span className={css.modelSwitchOn}>{t('vendors.enabledTag')}</span> : null}
-                  {/* 白嫖到底认不认这个型号，勾上就告诉你：价目 0 / 目录零价 / 名字带 free。 */}
+                  {/* 免费档到底认不认这个型号，勾上就告诉你：价目 0 / 目录零价 / 名字带 free。 */}
                   {enabled && (price !== undefined
                     ? price.input === 0 && price.output === 0
                     : catalogPrice !== undefined && catalogPrice.input === 0 && catalogPrice.output === 0
@@ -1077,8 +1077,8 @@ function slugOf(name: string): string {
 
 /** 掩码视图 → 可保存配置（apiKey 空串 = 保留已存明文）。 */
 /**
- * 这一份配置里白嫖模式真正能用的模型数（零价目 / 目录零价 / 名字带 free）。
- * 保存后立刻回显，省得用户改完还在猜「白嫖到底认不认」。
+ * 这一份配置里免费档真正能用的模型数（零价目 / 目录零价 / 名字带 free）。
+ * 保存后立刻回显，省得用户改完还在猜「免费档到底认不认」。
  */
 function countZeroCost(vendors: VendorConfig[]): number {
   let total = 0

@@ -142,7 +142,7 @@ test('画图 / 视频 / 向量模型不进对话路由（chat: false）', () => 
   }
 })
 
-test('池合成：图片模型进池但标成非对话，路由与白嫖都不会挑它', () => {
+test('池合成：图片模型进池但标成非对话，路由与免费档都不会挑它', () => {
   const pool = synthesizePool([vendor({
     vendorId: 'openai',
     enabledModels: ['gpt-6-astra', 'gpt-image-2.5-flare'],

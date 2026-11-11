@@ -2,10 +2,10 @@
  * 从输入框里「模型选择」当前显示的模型名，立刻读出档位。
  *
  * 为什么要在前端读：网关只有在请求到达时才知道这一轮用的是哪个虚拟模型，
- * 于是「选了管家·白嫖」到「面板显示白嫖」之间要等一次对话。用户要的是点完立刻同步，
+ * 于是「选了管家·免费档」到「面板显示免费档」之间要等一次对话。用户要的是点完立刻同步，
  * 所以这里直接看模型选择器上的字。
  *
- * 只认管家自己的模型名：设置页里也有「白嫖模式」这种按钮，不能误判。
+ * 只认管家自己的模型名：设置页里也有「免费档」这种按钮，不能误判。
  */
 import type { RoutingMode } from '../core/types.ts'
 
@@ -16,7 +16,7 @@ const STEWARD_LABEL = /管家|steward/iu
 export function modeOfModelLabel(label: string): RoutingMode | undefined {
   const text = label.trim()
   if (text === '' || text.length > 32 || !STEWARD_LABEL.test(text)) return undefined
-  if (/白嫖|freeload/iu.test(text)) return 'free'
+  if (/免费档|freeload/iu.test(text)) return 'free'
   if (/最强火力|max[\s_-]*power/iu.test(text)) return 'max_power'
   if (/效率优先|balanced/iu.test(text)) return 'balanced'
   if (/极致便宜|frugal/iu.test(text)) return 'frugal'
