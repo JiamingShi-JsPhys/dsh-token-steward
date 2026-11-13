@@ -104,17 +104,23 @@ test('vendors.json：密钥以密文写盘，重启后能解回明文', async ()
   })
 })
 
-test('vendors.json：老版本留下的明文能读，并在下次保存时升级成密文', async () => {
+test('vendors.json：老版本留下的明文在启动读盘时就升级成密文（不用等保存）', async () => {
   await withDirectory(async (directory) => {
     await writeFile(join(directory, 'vendors.json'), JSON.stringify(document('sk-legacy-plain-key'), null, 2), 'utf8')
     const vault = await createSecretVault(directory, { env: {} })
     const store = createVendorStore(directory, { vault })
     const loaded = await store.load()
+    // 内存里照常可用
     assert.equal(loaded.vendors[0]?.apiKey, 'sk-legacy-plain-key')
-    await store.save(loaded)
+    // 盘上当场就是密文——不能因为「用户还没点保存」让明文一直躺着
     const raw = await readFile(join(directory, 'vendors.json'), 'utf8')
-    assert.ok(!raw.includes('sk-legacy-plain-key'))
-    assert.ok(raw.includes('enc:v1:'))
+    assert.ok(!raw.includes('sk-legacy-plain-key'), '明文必须在 load 时就被抹掉')
+    assert.ok(raw.includes('enc:v1:'), '应写成 enc:v1: 密文')
+    // 再读一次仍能解回同一把钥匙，且不会反复重写
+    const again = await createVendorStore(directory, { vault }).load()
+    assert.equal(again.vendors[0]?.apiKey, 'sk-legacy-plain-key')
+    const second = await readFile(join(directory, 'vendors.json'), 'utf8')
+    assert.equal(second, raw, '已经是密文时 load 不应重写文件')
   })
 })
 

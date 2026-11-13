@@ -10,8 +10,8 @@
   改为 AES-256-GCM 加密，格式 `enc:v1:<iv>.<tag>.<ciphertext>`，每个值独立随机 IV。
 - 密钥在 `$DSH_HOME/token-steward/.vault-key`（0600，首次使用生成）；可用
   `STEWARD_VAULT_KEY` 覆盖。新增配置 `encryptAtRest`（默认 `true`）。
-- 老文件里的明文照常读取，下次保存自动加密；解不开的密文原样保留并显示为「没有密钥」，
-  一次失败的读取不会抹掉用户的密钥。
+- 老文件里的明文照常读取，并**在启动读盘的那一刻就地加密**（不必等到用户下次保存）；
+  解不开的密文原样保留并显示为「没有密钥」，一次失败的读取不会抹掉用户的密钥。
 
 ### 面板 API：回环不再是身份认证
 - 所有 `/api/token-steward/*` 增加 `Host` 校验（挡 DNS rebinding）、`Origin` 同源校验、
@@ -38,6 +38,11 @@
 ### 文件权限
 - 原子写改为在 `open()` 时创建 0600 临时文件（不再「先 0644 落盘再 chmod」）；
   `gateway.json` 此前完全没有设置过权限，与文档承诺不符，现已修正。
+
+### 自诊断
+- `state.json` 以前只写一次 `status: "mounting"`，永远不翻页，从外部分不清「还在初始化」
+  和「已经装好了」。现在 `apply()` 正常走完会改写为 `status: "ready"` 并附 `readyAt`；
+  进程 pid 也一并留着，便于确认是不是当前这次启动写的。
 
 ### 静态审查（DeepSec 0.2.0）
 按 `deepsec shield scan` / `agent-audit` / `supply-chain check` 三个入口扫过全仓库，

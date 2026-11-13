@@ -4,7 +4,7 @@
  * 这是 Token 管家面板的**第一配置源**：厂家 Tab 里粘贴的 API Key 与勾选的
  * 模型都落在这里。密钥以 AES-256-GCM 密文写盘（`enc:v1:` 前缀，密钥在
  * `.vault-key`），解密只发生在内存里；永不进入日志、快照与任何过线 JSON——
- * GET 接口只回掩码尾部。老版本留下的明文会在下一次保存时自动转成密文。
+ * GET 接口只回掩码尾部。老版本留下的明文在启动读盘时就地转成密文。
  *
  * 损坏处理与台账一致：隔离留档为 .corrupt-<ISO>，然后当空配置启动，
  * 绝不让一个坏文件把插件挂载打崩。
@@ -56,6 +56,15 @@ export function createVendorStore(directory: string, options: VendorStoreOptions
    */
   const sealedBackup = new Map<string, string>()
 
+  /** 原子写盘（密文），load 的自动迁移与 save 共用。 */
+  const persist = async (document: VendorsDocument): Promise<void> => {
+    const out: VendorsDocument = vault === undefined || !vault.available()
+      ? document
+      : { ...document, vendors: document.vendors.map((vendor) => sealVendor(vendor, vault, sealedBackup)) }
+    await writeFileAtomic(filePath, JSON.stringify(out, null, 2) + '\n', { mode: 0o600 })
+    await chmod(filePath, 0o600).catch(() => {})
+  }
+
   return {
     path: () => filePath,
     async load() {
@@ -64,7 +73,16 @@ export function createVendorStore(directory: string, options: VendorStoreOptions
       try {
         const parsed = parseDocument(text)
         if (parsed !== undefined) {
-          if (vault !== undefined && vault.available()) unseal(parsed, vault, sealedBackup)
+          if (vault !== undefined && vault.available()) {
+            const needsSeal = unseal(parsed, vault, sealedBackup)
+            if (needsSeal) {
+              /*
+               * 启动即迁移：1.1.x 留下的是明文，不该因为「用户还没点保存」就一直
+               * 躺在盘上。写失败不阻断挂载——内存里仍是可用的明文，下次保存会重试。
+               */
+              await persist(parsed).catch(() => {})
+            }
+          }
           return parsed
         }
       } catch {
@@ -74,13 +92,7 @@ export function createVendorStore(directory: string, options: VendorStoreOptions
       await quarantineFile(filePath, Date.now()).catch(() => {})
       return emptyVendorsDocument()
     },
-    async save(document) {
-      const out: VendorsDocument = vault === undefined || !vault.available()
-        ? document
-        : { ...document, vendors: document.vendors.map((vendor) => sealVendor(vendor, vault, sealedBackup)) }
-      await writeFileAtomic(filePath, JSON.stringify(out, null, 2) + '\n', { mode: 0o600 })
-      await chmod(filePath, 0o600).catch(() => {})
-    },
+    save: persist,
   }
 }
 
@@ -96,10 +108,19 @@ function sealVendor(vendor: VendorConfig, vault: SecretVault, backup: Map<string
   return { ...vendor, apiKey: sealed }
 }
 
-/** 读盘后把 apiKey 解密回明文（只在内存里）；解不开的留个备份再置空。 */
-function unseal(document: VendorsDocument, vault: SecretVault, backup: Map<string, string>): void {
+/**
+ * 读盘后把 apiKey 解密回明文（只在内存里）；解不开的留个备份再置空。
+ *
+ * 返回值 = 「盘上还有明文」：有任何一个非空、又不是 `enc:v1:` 的值，就说明这是
+ * 1.1.x 留下的老文件（或用户手改过），load 据此立刻重写为密文。
+ */
+function unseal(document: VendorsDocument, vault: SecretVault, backup: Map<string, string>): boolean {
+  let plaintextOnDisk = false
   for (const vendor of document.vendors) {
-    if (!isSealed(vendor.apiKey)) continue
+    if (!isSealed(vendor.apiKey)) {
+      if (vendor.apiKey !== '') plaintextOnDisk = true
+      continue
+    }
     const plain = vault.open(vendor.apiKey)
     if (plain === undefined) {
       backup.set(vendor.vendorId, vendor.apiKey)
@@ -109,6 +130,7 @@ function unseal(document: VendorsDocument, vault: SecretVault, backup: Map<strin
     vendor.apiKey = plain
     backup.delete(vendor.vendorId)
   }
+  return plaintextOnDisk
 }
 
 /** 解析并校验文档形状；不合形返回 undefined（由调用方隔离）。 */

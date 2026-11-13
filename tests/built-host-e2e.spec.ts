@@ -109,6 +109,11 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
       },
     }, {})
 
+    // 自诊断：apply 走完必须翻成 ready（以前永远停在 'mounting'）。
+    const selfCheck = JSON.parse(await readFile(join(home, 'token-steward', 'state.json'), 'utf8')) as { status: string, pid: number }
+    assert.equal(selfCheck.status, 'ready')
+    assert.equal(selfCheck.pid, process.pid)
+
     // 网关状态文件必须真的写出来，且带端口与令牌。
     const statePath = join(home, 'token-steward', 'gateway.json')
     const state = JSON.parse(await readFile(statePath, 'utf8')) as {

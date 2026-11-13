@@ -7,3 +7,4 @@ _archive/
 
 # 头像原始素材（664MB，含第三方立绘原图，不入库）
 assets/incoming/
+.claude/

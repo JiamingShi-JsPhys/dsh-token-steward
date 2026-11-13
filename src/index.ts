@@ -282,11 +282,12 @@ export async function apply(ctx: {
 }, config?: StewardConfigFields): Promise<void> {
   // 落盘自诊断第一站：Desktop 宿主不捕获 stdout，apply 是否被调用、在哪一步
   // 失败，只有写进文件才能从外部看见（provider-proxy 的 state.json 同款）。
+  const appliedAt = Date.now()
   try {
     const { mkdir } = await import('node:fs/promises')
     const dir = join(dataDirectory())
     await mkdir(dir, { recursive: true })
-    await writeFileAtomic(join(dir, 'state.json'), JSON.stringify({ appliedAt: Date.now(), pid: process.pid, status: 'mounting' }, null, 2) + String.fromCharCode(10))
+    await writeFileAtomic(join(dir, 'state.json'), JSON.stringify({ appliedAt, pid: process.pid, status: 'mounting' }, null, 2) + String.fromCharCode(10))
   } catch {
     // 诊断写不进去也不阻断挂载。
   }
@@ -969,6 +970,17 @@ export async function apply(ctx: {
     // 测试拿到同一个函数，可以 await 它确认 SQLite / 端口真的关完了。
     ctx.effect(() => teardown as unknown as () => void, 'token-steward: runtime')
   } else log.warn('ctx.effect is unavailable; resources rely on process exit')
+
+  // 落盘自诊断最后一站：挂载真的走完了才翻成 ready。以前 state.json 永远停在
+  // 'mounting'，从外部看分不清「还在初始化」和「早就装好了」。
+  try {
+    const { mkdir } = await import('node:fs/promises')
+    const dir = join(dataDirectory())
+    await mkdir(dir, { recursive: true })
+    await writeFileAtomic(join(dir, 'state.json'), JSON.stringify({ appliedAt, readyAt: Date.now(), pid: process.pid, status: 'ready' }, null, 2) + String.fromCharCode(10))
+  } catch {
+    // 同样的道理：写不进去不影响已经挂好的插件。
+  }
 }
 
 /**

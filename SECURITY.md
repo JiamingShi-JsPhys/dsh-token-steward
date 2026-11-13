@@ -48,9 +48,10 @@ does not pretend otherwise.
 - Files are created with `0600` at `open()` time (not chmod afterwards), so there is no window where
   a world-readable temp file holds a secret. On Windows the mode is advisory; ACL inheritance from
   `%USERPROFILE%` is what protects the directory.
-- Old plaintext files keep working: a key read as plaintext is re-written as ciphertext on the next
-  save. A ciphertext that cannot be decrypted (key replaced, file edited) is **preserved verbatim**
-  and shown as "no key" — a failed read never erases the stored secret.
+- Old plaintext files keep working, and are **re-sealed the moment they are read at startup** — the
+  user does not have to touch the panel first. A ciphertext that cannot be decrypted (key replaced,
+  file edited) is **preserved verbatim** and shown as "no key" — a failed read never erases the
+  stored secret.
 
 ### Panel API (loopback is not authentication)
 
@@ -121,7 +122,8 @@ Every `/api/token-steward/*` route now requires all of:
 - `vendors.json` 里的厂家密钥、`gateway.json` 里的本地令牌、`cache.sqlite` 里的缓存正文，
   一律 AES-256-GCM（每个值独立随机 IV），明文只活在内存里；
 - 钥匙在 `$DSH_HOME/token-steward/.vault-key`（0600），也可用 `STEWARD_VAULT_KEY` 放到别处；
-- 老版本留下的明文文件照常能读，下次保存自动变成密文；解不开的密文会原样保留，不会被抹掉。
+- 老版本留下的明文文件照常能读，并在**启动读盘时立刻变成密文**（不用等用户点保存）；
+  解不开的密文会原样保留，不会被抹掉。
 
 面板 API 不再只靠「来自 127.0.0.1」：还要求 `Host` 是回环名（挡 DNS rebinding）、`Origin` 同源、
 跨站请求头出局、写操作必须是 `application/json`（挡 CSRF）。
