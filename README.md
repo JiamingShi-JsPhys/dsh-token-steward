@@ -182,7 +182,7 @@ token 的唯一真相源是 `dsh-usage` 的按日台账；本插件另记一条*
 > **本包尚未发布到 npm**（`pnpm add dsh-token-steward` 会得到 404）。请从
 > GitHub 安装——二选一：
 >
-> - **有 git**：`pnpm add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.1.4`
+> - **有 git**：`pnpm add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.2.0`
 >   （或 `git clone` 后 `pnpm add file:<本地路径>`）
 > - **没有 git**：到 [Releases](https://github.com/JiamingShi-JsPhys/dsh-token-steward/releases)
 >   下载 `dsh-token-steward-<版本>.zip`（内含预构建的 `lib/`，无需编译），
