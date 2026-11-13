@@ -241,17 +241,31 @@ test('mode 被拒绝时返回 409', async () => {
   })
 })
 
-test('mode 的非 JSON 体是 400', async () => {
+test('mode 的非 JSON Content-Type 直接被拒（CSRF 防线），JSON 但解析不了才是 400', async () => {
   await withRoutes(api(), async (base) => {
-    const response = await fetch(base + API_PREFIX + '/mode', { method: 'POST', body: 'x' })
-    assert.equal(response.status, 400)
+    // text/plain 是浏览器能跨源发出的「简单请求」，必须在解析前挡掉。
+    const plain = await fetch(base + API_PREFIX + '/mode', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: '{"mode":"free"}',
+    })
+    assert.equal(plain.status, 403)
+    const malformed = await fetch(base + API_PREFIX + '/mode', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'x',
+    })
+    assert.equal(malformed.status, 400)
   })
 })
 
 test('reload 触发一次重读并回报结果', async () => {
   let called = 0
   await withRoutes(api({ reload: async () => { called += 1; return { ok: false, status: 'rejected', error: 'bad yaml' } } }), async (base) => {
-    const response = await fetch(base + API_PREFIX + '/reload', { method: 'POST' })
+    const response = await fetch(base + API_PREFIX + '/reload', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    })
     assert.equal(response.status, 200)
     const body = await response.json() as { ok: boolean, status: string, error: string }
     assert.equal(body.ok, false)
@@ -361,7 +375,10 @@ test('import-harness 不带 body 时不传范围（保留整份导入这条脚�
       return { ok: true, imported: [] }
     },
   }), async (base) => {
-    const response = await fetch(base + API_PREFIX + '/import-harness', { method: 'POST' })
+    const response = await fetch(base + API_PREFIX + '/import-harness', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    })
     assert.equal(response.status, 200)
     assert.deepEqual(seen, [undefined])
   })

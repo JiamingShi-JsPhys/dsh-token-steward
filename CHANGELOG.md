@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.2.0 — 未发布（本地安全审查版）
+
+这一版没有新功能，全部是安全加固。每一项都对应一个可复现的攻击面，详见
+[SECURITY.md](SECURITY.md)。
+
+### 加密落盘
+- 厂家密钥（`vendors.json`）、网关令牌（`gateway.json`）、缓存正文（`cache.sqlite`）
+  改为 AES-256-GCM 加密，格式 `enc:v1:<iv>.<tag>.<ciphertext>`，每个值独立随机 IV。
+- 密钥在 `$DSH_HOME/token-steward/.vault-key`（0600，首次使用生成）；可用
+  `STEWARD_VAULT_KEY` 覆盖。新增配置 `encryptAtRest`（默认 `true`）。
+- 老文件里的明文照常读取，下次保存自动加密；解不开的密文原样保留并显示为「没有密钥」，
+  一次失败的读取不会抹掉用户的密钥。
+
+### 面板 API：回环不再是身份认证
+- 所有 `/api/token-steward/*` 增加 `Host` 校验（挡 DNS rebinding）、`Origin` 同源校验、
+  `Sec-Fetch-Site` 跨站拒绝、写操作强制 `Content-Type: application/json`（挡 CSRF）。
+- 此前任何网页都能用 DNS rebinding 读到 `/gateway` 里的本地令牌，或用 `text/plain`
+  的简单请求 POST `/mode`、`/discover`。
+
+### 密钥出站
+- `/discover` 与网关的模型发现：**调用方指定了别的地址就不再借用已保存的密钥**。
+  以前这是一个「把真钥匙发给任意地址」的原语。
+- 发现端点不再接受 `?api_key=` 查询参数，改用 `x-steward-upstream-key` 请求头。
+- 探测地址只允许 http/https，拒绝内嵌凭据与云元数据 / 链路本地地址
+  （`169.254.0.0/16`、`fe80::/10`、`metadata.google.internal`、`0.0.0.0`）。
+- 跨主机重定向丢掉 `Authorization` / `x-api-key` / `Cookie`，拒绝 https→http 降级；
+  对话请求直接 `redirect: 'error'`，不跟任何重定向。
+
+### 泄漏面收紧
+- 网关错误回包与全部宿主日志经过统一脱敏：上游 401 回显的 `sk-…` 不再进入界面或会话。
+- 内部 500 只回通用文案，细节只进（脱敏后的）日志。
+- 同步到 DSH 时不再往 `cordis.patch.yml` 写明文 `apiKey`（`llm-pi-ai` 只认 `apiKeyEnv`，
+  那份副本对 DSH 毫无作用）。文件里已有的 `apiKey` 保持不动。
+- 把令牌写回 `HKCU\Environment` 改为默认关闭（`syncTokenEnv`，默认 `false`）。
+
+### 文件权限
+- 原子写改为在 `open()` 时创建 0600 临时文件（不再「先 0644 落盘再 chmod」）；
+  `gateway.json` 此前完全没有设置过权限，与文档承诺不符，现已修正。
+
+### 静态审查（DeepSec 0.2.0）
+按 `deepsec shield scan` / `agent-audit` / `supply-chain check` 三个入口扫过全仓库，
+最终 0 findings。过程中修掉两处它点出来的真实问题：
+- **缺限速**：网关补上失败认证限速（每地址 20 次/分钟 → 429）与模型发现限速
+  （全局 60 次/分钟，每次探测都带密钥出站）。
+- **原型键**：`modelTags` / `modelPricing` / 请求头名里的 `__proto__`、
+  `constructor`、`prototype` 一律丢弃或整份拒绝，不再写进普通对象。
+另外把 `.vault-key` 之外的扫描误报源头也处理了：`STEWARD_TOKEN_ENV` 常量改名为
+`STEWARD_ENV_NAME`（它存的是环境变量名，不是密钥），客户端 bundle 限制行长
+（`lineLimit: 200`），避免「整份 bundle 一行」导致的行级误报与不可读堆栈。
+
 ## 1.1.4 — 2026-11-11
 
 ### 第三档更名为「免费档」

@@ -287,6 +287,10 @@ export async function attemptOnce(
       headers: anthropic ? anthropicHeaders(found.provider, secret) : buildHeaders(found.provider, secret),
       body: JSON.stringify(anthropic ? toAnthropicBody(payload, found.model.id) : payload),
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
+      // 不跟重定向：请求体是整段对话，Authorization 是用户的钥匙。
+      // 上游若真要换地址，让它以 3xx 失败，由分类器降级到下一家，
+      // 而不是把这两样东西一起交给重定向目标。
+      redirect: 'error',
     })
 
     if (response.ok) {

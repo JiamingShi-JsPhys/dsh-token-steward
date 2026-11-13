@@ -8,6 +8,7 @@
  * 一条硬规则：任一字段非法 → **整份拒绝**。半应用的路由表比没有路由表更危险，
  * 因为用户看到「保存成功」，流量却走进了没打算用的模型。
  */
+import { isSafeRecordKey } from './record-keys.ts'
 import type {
   ApiShape,
   Availability,
@@ -198,6 +199,10 @@ function readHeaders(
   }
   const out: Record<string, string> = {}
   for (const [name, raw] of Object.entries(value)) {
+    if (!isSafeRecordKey(name)) {
+      fail(path + '.' + name, 'header name is reserved')
+      return undefined
+    }
     const text = asString(raw)
     if (text === undefined) {
       fail(path + '.' + name, 'expected a non-empty single-line string')

@@ -36,6 +36,66 @@ export function isLoopbackRequest(req: IncomingMessage): boolean {
     || address === 'localhost'
 }
 
+/** Host / Origin 里允许出现的主机名。 */
+const LOOPBACK_NAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
+/** 取一个 `host[:port]` 头的主机名（小写、去掉端口与 IPv6 方括号外的修饰）。 */
+function hostnameOf(host: string): string | undefined {
+  const trimmed = host.trim().toLowerCase()
+  if (trimmed === '') return undefined
+  // 纯主机名（无端口）也可能带方括号，例如 `[::1]`。
+  if (trimmed.startsWith('[')) {
+    const end = trimmed.indexOf(']')
+    return end === -1 ? undefined : trimmed.slice(0, end + 1)
+  }
+  const colon = trimmed.lastIndexOf(':')
+  if (colon === -1) return trimmed
+  // 只有「一个冒号」才当 host:port；多个冒号是未加方括号的 IPv6，直接拒绝。
+  if (trimmed.indexOf(':') !== colon) return undefined
+  return trimmed.slice(0, colon)
+}
+
+/**
+ * 这个请求能不能动面板 API。
+ *
+ * 只查 `remoteAddress` 是不够的：DNS rebinding 会把攻击者的域名解析到
+ * 127.0.0.1，于是「来自回环」成立、同源也成立，浏览器就能读走 `/gateway`
+ * 里的本地令牌。所以再加四道：
+ *  1. `Host` 必须是回环名——rebinding 的请求带的是攻击者域名，直接出局；
+ *  2. `Origin`（若有）必须与 `Host` 同源；
+ *  3. `Sec-Fetch-Site`（若有）不能是 cross-site / same-site；
+ *  4. 有请求体的方法必须是 `application/json`——浏览器跨源发不出这个
+ *     Content-Type 而不触发预检，preflight 又过不了我们没开的 CORS。
+ *
+ * @returns 拒绝原因；`undefined` 表示放行。
+ */
+export function panelRequestRejection(req: IncomingMessage): string | undefined {
+  if (!isLoopbackRequest(req)) return 'forbidden: loopback only'
+  const hostHeader = req.headers.host
+  if (typeof hostHeader !== 'string') return 'forbidden: missing host header'
+  const hostname = hostnameOf(hostHeader)
+  if (hostname === undefined || !LOOPBACK_NAMES.has(hostname)) {
+    return 'forbidden: host must be a loopback name'
+  }
+  const site = req.headers['sec-fetch-site']
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
+    return 'forbidden: cross-site request'
+  }
+  const origin = req.headers.origin
+  if (typeof origin === 'string') {
+    const allowed = ['http://' + hostHeader.toLowerCase(), 'https://' + hostHeader.toLowerCase()]
+    if (!allowed.includes(origin.toLowerCase())) return 'forbidden: origin mismatch'
+  }
+  const method = (req.method ?? 'GET').toUpperCase()
+  if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+    const type = req.headers['content-type']
+    if (typeof type !== 'string' || !type.toLowerCase().startsWith('application/json')) {
+      return 'forbidden: panel writes must be application/json'
+    }
+  }
+  return undefined
+}
+
 /** 写 JSON。 */
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body)
@@ -126,8 +186,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/snapshot',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         const cookieHeader = req.headers.cookie
@@ -140,8 +201,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/mode',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'POST') {
@@ -174,8 +236,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/reload',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'POST') {
@@ -191,8 +254,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/discover',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'POST') {
@@ -240,8 +304,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/delete-vendor',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'POST') {
@@ -281,8 +346,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/sync-harness',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'POST') {
@@ -322,8 +388,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/import-harness',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'POST') {
@@ -361,8 +428,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/vendors',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method === 'GET') {
@@ -407,8 +475,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/avatar',
       handler: async (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         if (req.method !== 'GET') {
@@ -439,8 +508,9 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       path: API_PREFIX + '/gateway',
       handler: (req, res) => {
         if (!guard(res)) return
-        if (!isLoopbackRequest(req)) {
-          writeJson(res, 403, { ok: false, error: 'forbidden: loopback only' })
+        const rejection = panelRequestRejection(req)
+        if (rejection !== undefined) {
+          writeJson(res, 403, { ok: false, error: rejection })
           return
         }
         const info = api.gateway()

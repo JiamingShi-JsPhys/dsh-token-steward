@@ -2,8 +2,9 @@
  * vendors.json 的读写（$DSH_HOME/token-steward/vendors.json，0600）。
  *
  * 这是 Token 管家面板的**第一配置源**：厂家 Tab 里粘贴的 API Key 与勾选的
- * 模型都落在这里。明文密钥只存在这一个文件里（0600，与 gateway.json 同级），
- * 永不进入日志、快照与任何过线 JSON——GET 接口只回掩码尾部。
+ * 模型都落在这里。密钥以 AES-256-GCM 密文写盘（`enc:v1:` 前缀，密钥在
+ * `.vault-key`），解密只发生在内存里；永不进入日志、快照与任何过线 JSON——
+ * GET 接口只回掩码尾部。老版本留下的明文会在下一次保存时自动转成密文。
  *
  * 损坏处理与台账一致：隔离留档为 .corrupt-<ISO>，然后当空配置启动，
  * 绝不让一个坏文件把插件挂载打崩。
@@ -12,6 +13,8 @@ import { chmod, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RoutingMode, VendorConfig } from '../core/types.ts'
 import { readFileIfExists, writeFileAtomic, quarantineFile, isNotFound } from './atomic-file.ts'
+import { isSealed, type SecretVault } from './secret-vault.ts'
+import { isSafeRecordKey } from '../core/record-keys.ts'
 
 /** vendors.json 的版本。 */
 export const VENDORS_VERSION = 1
@@ -37,8 +40,21 @@ export interface VendorStore {
   path(): string
 }
 
-export function createVendorStore(directory: string): VendorStore {
+export interface VendorStoreOptions {
+  /** 静态加密；缺省表示不加密（测试与老调用点）。 */
+  vault?: SecretVault
+}
+
+export function createVendorStore(directory: string, options: VendorStoreOptions = {}): VendorStore {
   const filePath = join(directory, 'vendors.json')
+  const vault = options.vault
+  /**
+   * 解不开的密文（换了密钥、文件被改过）：原样留着。
+   *
+   * 绝不能因为一次读失败就在下次保存时把用户密钥抹成空串——那等于「钥匙丢了，
+   * 顺手把锁也砸了」。面板会显示 hasKey=false，用户重新填一次就恢复正常。
+   */
+  const sealedBackup = new Map<string, string>()
 
   return {
     path: () => filePath,
@@ -47,7 +63,10 @@ export function createVendorStore(directory: string): VendorStore {
       if (text === undefined) return emptyVendorsDocument()
       try {
         const parsed = parseDocument(text)
-        if (parsed !== undefined) return parsed
+        if (parsed !== undefined) {
+          if (vault !== undefined && vault.available()) unseal(parsed, vault, sealedBackup)
+          return parsed
+        }
       } catch {
         // fall through to quarantine
       }
@@ -56,9 +75,39 @@ export function createVendorStore(directory: string): VendorStore {
       return emptyVendorsDocument()
     },
     async save(document) {
-      await writeFileAtomic(filePath, JSON.stringify(document, null, 2) + '\n')
+      const out: VendorsDocument = vault === undefined || !vault.available()
+        ? document
+        : { ...document, vendors: document.vendors.map((vendor) => sealVendor(vendor, vault, sealedBackup)) }
+      await writeFileAtomic(filePath, JSON.stringify(out, null, 2) + '\n', { mode: 0o600 })
       await chmod(filePath, 0o600).catch(() => {})
     },
+  }
+}
+
+/** 保存前把 apiKey 换成密文；空串沿用上次解不开的那份密文。 */
+function sealVendor(vendor: VendorConfig, vault: SecretVault, backup: Map<string, string>): VendorConfig {
+  if (vendor.apiKey === '') {
+    const kept = backup.get(vendor.vendorId)
+    return kept === undefined ? vendor : { ...vendor, apiKey: kept }
+  }
+  if (isSealed(vendor.apiKey)) return vendor
+  const sealed = vault.seal(vendor.apiKey)
+  if (isSealed(sealed)) backup.set(vendor.vendorId, sealed)
+  return { ...vendor, apiKey: sealed }
+}
+
+/** 读盘后把 apiKey 解密回明文（只在内存里）；解不开的留个备份再置空。 */
+function unseal(document: VendorsDocument, vault: SecretVault, backup: Map<string, string>): void {
+  for (const vendor of document.vendors) {
+    if (!isSealed(vendor.apiKey)) continue
+    const plain = vault.open(vendor.apiKey)
+    if (plain === undefined) {
+      backup.set(vendor.vendorId, vendor.apiKey)
+      vendor.apiKey = ''
+      continue
+    }
+    vendor.apiKey = plain
+    backup.delete(vendor.vendorId)
   }
 }
 
@@ -130,7 +179,7 @@ function coerceModelTags(value: unknown): Record<string, string[]> | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const out: Record<string, string[]> = {}
   for (const [modelId, tags] of Object.entries(value as Record<string, unknown>)) {
-    if (modelId === '' || !Array.isArray(tags)) continue
+    if (!isSafeRecordKey(modelId) || !Array.isArray(tags)) continue
     const list = tags.filter((tag): tag is string => typeof tag === 'string' && tag !== '')
     if (list.length > 0) out[modelId] = list
   }
@@ -142,7 +191,7 @@ function coerceModelPricing(value: unknown): Record<string, { input: number, out
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const out: Record<string, { input: number, output: number }> = {}
   for (const [modelId, price] of Object.entries(value as Record<string, unknown>)) {
-    if (modelId === '' || price === null || typeof price !== 'object' || Array.isArray(price)) continue
+    if (!isSafeRecordKey(modelId) || price === null || typeof price !== 'object' || Array.isArray(price)) continue
     const record = price as Record<string, unknown>
     const input = record.input
     const output = record.output

@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.1.4 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 558 条
+**版本：** 1.2.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 582 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
@@ -25,7 +25,7 @@
 
 > **免责声明**：本插件是个人为日常使用而写的调度工具，不是经过同行评审的服务。它在你的机器上真实地花你的钱：免费档之外的每一次调用都会按上游账单计费。作者不对任何第三方模型服务的行为、价格变动、可用性，以及由此产生的费用负责。
 >
-> **密钥**：面板里粘贴的 API Key 以明文存放在 `$DSH_HOME/token-steward/vendors.json`（权限 0600，仅本机可读）。它不会进入日志、快照或任何过线 JSON，但**它不是加密存储**——和 DSH 自己的凭据文件同级对待。
+> **密钥**：面板里粘贴的 API Key 以 **AES-256-GCM 密文**（`enc:v1:`）存放在 `$DSH_HOME/token-steward/vendors.json`，文件权限 0600，明文只在发请求的那一刻存在于内存。密钥本身在 `.vault-key`（0600，首次启动自动生成）。它不会进入日志、快照或任何过线 JSON。威胁模型与限制见 [SECURITY.md](SECURITY.md)。
 >
 > **素材**：厂商头像（`assets/avatars/`）取自 B 站 UP 主 **@zipzippipe** 与 **@大只菠萝熊**（Claude 头像）的立绘作品，仅做 256×256 脸部裁切用于界面展示，版权归原作者所有。`assets/avatars/full/` 保留原图以便追溯。
 
@@ -237,7 +237,7 @@ profile 重排坏。
 ### 四个踩过的坑，务必照抄
 
 - **`defaultMaxTokens: 65536`**。`llm-pi-ai` 的默认值是 128000，会原样写进请求的 `max_tokens`。Agnes 这类上游硬上限是 65536，直接回 400 `max_tokens 不能超过 65536`，会话当场失败。网关侧还会再按窗口压一次，但 profile 里的初值先写对能省掉一整类报错。
-- **`STEWARD_LOCAL_TOKEN` 必须和网关一致。** 插件的 `apiKeyEnv` 指向进程环境里的本地令牌，而 DSH 的凭据层读的是**启动时的环境快照**——插件在进程里改 `process.env` 它看不见。1.1.1 起插件启动时会把这枚令牌经宿主的 `credentials.set` 写进凭据库，设置页因此显示「留空使用已保存凭据」而不是「未检测到环境变量」。系统用户环境变量里如果还留着旧令牌（换过 `gateway.json`、装过旧版本），每个请求都会被网关 401，界面显示「API 密钥无效 AUTH」。1.1.0 起有三道保障：① 网关**优先采用继承来的合法令牌**，主动对齐到 DSH 手里那把钥匙；② 启动时若发现持久化令牌与继承值不一致，**漂移窗口内两把都接住**（下次启动自然收敛成一把）；③ 每次启动把当前令牌**写回用户环境变量**（Windows），下次无论从开始菜单还是脚本启动都继承到正确的一把。面板「管家设置 → 刷新」里能看到当前实际生效的令牌。
+- **`STEWARD_LOCAL_TOKEN` 必须和网关一致。** 插件的 `apiKeyEnv` 指向进程环境里的本地令牌，而 DSH 的凭据层读的是**启动时的环境快照**——插件在进程里改 `process.env` 它看不见。1.1.1 起插件启动时会把这枚令牌经宿主的 `credentials.set` 写进凭据库，设置页因此显示「留空使用已保存凭据」而不是「未检测到环境变量」。系统用户环境变量里如果还留着旧令牌（换过 `gateway.json`、装过旧版本），每个请求都会被网关 401，界面显示「API 密钥无效 AUTH」。1.1.0 起有三道保障：① 网关**优先采用继承来的合法令牌**，主动对齐到 DSH 手里那把钥匙；② 启动时若发现持久化令牌与继承值不一致，**漂移窗口内两把都接住**（下次启动自然收敛成一把）；③ 早期版本还会把当前令牌写回用户环境变量（Windows）；1.2.0 起这一步改为默认关闭（`syncTokenEnv`），因为那会让之后启动的每个进程都继承令牌。①② 已足够避免漂移。面板「管家设置 → 刷新」里能看到当前实际生效的令牌。
 - **`apiKeyEnv: STEWARD_LOCAL_TOKEN`，不要写 `apiKey`**。`llm-pi-ai` 的 provider schema **没有 `apiKey` 字段**——写了会被静默忽略——凭据只通过 `apiKeyEnv` 从 `~/.dsh/.credentials.yaml` 的 `refs:` 解析。插件在网关启动时自己把本地令牌写进 `process.env.STEWARD_LOCAL_TOKEN`，所以两边名字必须一致，否则报 `No API key for provider: steward`。
 - **DSH 打不开、提示「应用无法启动 / desktop welcome: Web authentication failed」时，先清网页会话 Cookie。** 这与插件、密钥、账号都无关：桌面版宿主每次启动都会下发一枚**新名字**的 `dsh-auth-<随机>` Cookie，却从不回收上一次的；攒到 70 枚左右，Cookie 头越过 Node 默认的 16 KB 上限，宿主对所有带凭证的请求回 **431**，桌面端拿不到 2xx 就判定认证失败。1.1.0 起面板会盯着这个数（≥ 40 挂黄条、≥ 55 挂红条），**完全退出 DSH**（含托盘）后运行 `npm run repair:cookies` 清干净再打开即可——脚本会先备份 Cookies 库，只删本机 `127.0.0.1` 的 `dsh-auth-*`。
 
@@ -282,9 +282,10 @@ profile 重排坏。
 
 - 网关**只绑 127.0.0.1**，端口由系统分配；
 - 每次启动生成随机本地令牌，客户端必须带 `Authorization: Bearer <token>`；
-- 令牌写进 `gateway.json`（0600），与模型配置同目录；
+- 令牌在 `gateway.json` 里以**密文**保存（0600），与模型配置同目录；
 - 矩阵侧的凭据支持 `env:` / `file:` / `literal:` 引用，展开后的明文**只在内存**，不进日志、不进快照、不进任何过线 JSON；
-- **所有面板 API 拒绝非回环请求**——这些端点会暴露本地令牌与全部模型清单；
+- **所有面板 API 拒绝非回环请求**，并且校验 `Host` / `Origin` / `Sec-Fetch-Site`、写操作强制 `application/json`——这些端点会暴露本地令牌与全部模型清单，只靠「来自 127.0.0.1」挡不住 DNS rebinding 与 CSRF；
+- 出站只发往你配置的上游；已保存的密钥只发给它自己的上游地址，重定向不会带着钥匙跨主机，云元数据地址（169.254.x.x）一律拒绝；
 - 中国区防封：Anthropic 的 API Key 输入框正上方有固定红字警告。
 
 ---
@@ -297,6 +298,8 @@ profile 重排坏。
 | `poolPath` | `$DSH_HOME/token-steward/model_pool.yaml` | 矩阵配置路径（无 `vendors.json` 时的回退来源） |
 | `gatewayPort` | `51741` | 网关端口，`0` = 系统分配（固定值才能写进 profile，见安装一节） |
 | `autoWire` | `true` | 启动时把网关自动写进 DSH 的模型菜单；`false` 则完全不动 profile |
+| `encryptAtRest` | `true` | 密钥/令牌/缓存正文用 AES-256-GCM 加密落盘；`false` 则退回明文（不推荐） |
+| `syncTokenEnv` | `false` | 把网关令牌写回 Windows 用户环境变量。默认关：开启后之后启动的每个进程都继承它 |
 | `retainDays` | `180` | 路由台账保留天数 |
 | `usagePollMs` | `15000` | 读 dsh-usage 台账的间隔（最小 2000） |
 
@@ -346,7 +349,7 @@ model_pool.example.yaml  矩阵配置样例
 ```bash
 npm install
 npm run build      # 产出 lib/index.js 与 lib/client.js
-npm test           # 先构建，再跑全部 558 条断言
+npm test           # 先构建，再跑全部 582 条断言
 npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）
 ```
 
@@ -360,7 +363,7 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 - **首字节之后的失败不重试。** 这是正确性优先的取舍：流式响应已经发出，重发会制造第二份副作用。
 - **缓存只服务可复现的调用。** 带 tools、带随机种子、超长 prompt 都不缓存。
 - **成本是台账与估算的合成。** 上游不返 usage 的调用只能记估算值；面板会标出来。
-- **`vendors.json` 里的密钥是明文。** 权限 0600、只在本机，但不是加密存储。
+- **加密防的是「文件单独流出」，不防同用户恶意软件。** 密钥以 AES-256-GCM 落盘，但钥匙文件（`.vault-key`）也在同一台机器上；已经能以你的身份执行代码的程序两者都能读。详见 [SECURITY.md](SECURITY.md)。
 - **跨模型不搬 KV 状态。** 公开协议下只能保住消息日志、清理上一家的私有字段、并用会话粘性少丢前缀缓存；模型内部状态无法迁移。窗口放不下时是拒绝，不是截断。
 - **会话粘性只在本进程内。** DSH 重启后第一次请求会重新选路，之后照常粘住。
 

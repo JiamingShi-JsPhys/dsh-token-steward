@@ -98,12 +98,47 @@ export interface DiscoveryOptions {
   timeoutMs?: number
 }
 
+/** 不能探测的地址（不是「不推荐」，是「不发请求」）。 */
+const BLOCKED_HOSTS = new Set(['0.0.0.0', '::', '[::]', 'metadata.google.internal', 'metadata'])
+/** 链路本地 / 元数据网段：云主机的凭据端点就在这里。 */
+const BLOCKED_PREFIXES = ['169.254.', 'fe80:', 'fd00:ec2::']
+
+/**
+ * 校验一个用户提供的上游地址。
+ *
+ * 发现端点会把**已保存的密钥**（同一 host 时）当成 Bearer 发出去，所以这里
+ * 必须先把「能被当成内网跳板 / 云元数据端点」的地址挡掉。只放行 http/https；
+ * 127.0.0.1 仍然允许——本地 LM Studio / Ollama 是正当用法。
+ * @throws Error（可读消息）
+ */
+export function assertUpstreamUrl(raw: string): URL {
+  if (raw.length > 2048) throw new Error('endpoint url is too long')
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error('endpoint url is not a valid url')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('only http and https endpoints are supported')
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    throw new Error('endpoint url must not embed credentials')
+  }
+  // IPv6 的 hostname 带方括号（`[fe80::1]`），比对前缀前先去掉。
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (BLOCKED_HOSTS.has(host) || BLOCKED_PREFIXES.some((prefix) => host.startsWith(prefix))) {
+    throw new Error('refusing to probe a link-local or metadata endpoint')
+  }
+  return parsed
+}
+
 /**
  * 探测一家上游的真实模型列表，并按厂商目录注上名称与 Tier。
  * @throws Error（可读消息）：网络失败、非 2xx、响应不是 OpenAI 列表。
  */
 export async function discoverUpstreamModels(vendorId: string, baseUrl: string, apiKey: string, options: DiscoveryOptions = {}): Promise<DiscoveredEntry[]> {
-  const endpoint = baseUrl.replace(/\/+$/, '') + '/models'
+  const endpoint = assertUpstreamUrl(baseUrl).toString().replace(/\/+$/, '') + '/models'
   // 公开模型表（OpenCode Zen 之类）不需要密钥，空 key 就别发一个假的 Bearer。
   const headers = apiKey === '' ? {} : { authorization: 'Bearer ' + apiKey }
   const timeoutMs = options.timeoutMs ?? 15_000

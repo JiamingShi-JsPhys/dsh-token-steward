@@ -42,10 +42,14 @@ console.log('logs:'); for (const l of logs) console.log('  ', l)
 
 const statePath = join(home, 'token-steward', 'gateway.json')
 const state = JSON.parse(await (await import('node:fs/promises')).readFile(statePath, 'utf8'))
-console.log('gateway state:', { port: state.port, baseUrl: state.baseUrl, modelIds: state.modelIds, tokenLen: state.token.length })
+// 1.2.0 起令牌以密文落盘；探针通过同一个密钥库解开。
+const { createSecretVault } = await import('../src/host/secret-vault.ts')
+const vault = await createSecretVault(join(home, 'token-steward'), { env: process.env })
+const token = vault.available() ? vault.open(state.token) : state.token
+console.log('gateway state:', { port: state.port, baseUrl: state.baseUrl, modelIds: state.modelIds, tokenLen: token?.length ?? 0 })
 
 // 打网关的 /v1/models
-const models = await fetch(state.baseUrl + '/models', { headers: { authorization: 'Bearer ' + state.token } })
+const models = await fetch(state.baseUrl + '/models', { headers: { authorization: 'Bearer ' + token } })
 console.log('GET /v1/models ->', models.status, JSON.stringify(await models.json()))
 
 // 打面板 snapshot 路由（真 HTTP）

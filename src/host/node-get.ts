@@ -17,23 +17,54 @@ export interface NodeGetResult {
   body: string
 }
 
+/** 响应体上限：模型清单不该有 4 MiB，超过直接判失败而不是把内存吃满。 */
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+/** 跨主机重定向时必须丢掉的请求头（不能把钥匙交给别人）。 */
+const SENSITIVE_HEADERS = new Set(['authorization', 'x-api-key', 'cookie', 'proxy-authorization'])
+
 /**
  * GET 一个 JSON 地址。
  * @param url - 完整地址（http / https）
  * @param headers - 请求头；空值的项会被跳过
  * @param timeoutMs - 整体超时
- * @throws Error：连接失败、协议不支持、超时
+ * @throws Error：连接失败、协议不支持、超时、响应过大
  */
 export async function nodeGet(url: string, headers: Record<string, string>, timeoutMs: number): Promise<NodeGetResult> {
   let target = url
+  let carried: Record<string, string> = { ...headers }
+  let previousHost = hostOf(target)
   for (let hop = 0; hop < 4; hop += 1) {
-    const result = await once(target, headers, timeoutMs)
+    const result = await once(target, carried, timeoutMs)
     if (result.status < 300 || result.status >= 400 || result.location === undefined) {
       return { status: result.status, body: result.body }
     }
-    target = new URL(result.location, target).toString()
+    const next = new URL(result.location, target).toString()
+    const nextHost = hostOf(next)
+    // 跳到了别的主机：钥匙、Cookie 一律不带过去。哪怕上游是善意重定向，
+    // 把 Bearer 交给第三方也是泄漏。
+    if (nextHost !== previousHost) {
+      carried = Object.fromEntries(
+        Object.entries(carried).filter(([name]) => !SENSITIVE_HEADERS.has(name.toLowerCase())),
+      )
+    }
+    // 顺带拒绝 https → http 的降级：那等于把剩下的头（和查询参数）明文发出去。
+    if (previousHost !== nextHost && new URL(target).protocol === 'https:' && new URL(next).protocol === 'http:') {
+      throw new Error('refusing an https to http redirect')
+    }
+    previousHost = nextHost
+    target = next
   }
   throw new Error('too many redirects')
+}
+
+/** URL 的 host（小写）；解析失败返回空串。 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase()
+  } catch {
+    return ''
+  }
 }
 
 function once(url: string, headers: Record<string, string>, timeoutMs: number): Promise<NodeGetResult & { location?: string }> {
@@ -65,7 +96,16 @@ function once(url: string, headers: Record<string, string>, timeoutMs: number): 
       },
       (res) => {
         const chunks: Buffer[] = []
-        res.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+        let total = 0
+        res.on('data', (chunk: Buffer) => {
+          total += chunk.length
+          if (total > MAX_RESPONSE_BYTES) {
+            // 不能只停止收集：连接还在流，要继续读掉或直接销毁。
+            req.destroy(new Error('response exceeded ' + String(MAX_RESPONSE_BYTES) + ' bytes'))
+            return
+          }
+          chunks.push(chunk)
+        })
         res.on('end', () => {
           const location = res.headers.location
           resolve({

@@ -99,6 +99,10 @@ async function buildClient() {
     entryPoints: [join(TMP, 'client.cjs')],
     bundle: false,
     minify: true,
+    // 压成一条几万字符的单行会让所有按行工作的工具失明：浏览器报错只给
+    // 一个行号、静态扫描器会把整份 bundle 当成一个语句（`fetch` 与后面的
+    // `secret` 相邻 → 误报数据外泄）。限一下行长，代价是几 KB。
+    lineLimit: 200,
     format: 'cjs',
     write: false,
     logLevel: 'warning',

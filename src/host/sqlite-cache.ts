@@ -13,7 +13,8 @@
  * 三条不缓存的硬规则由 cacheKeyOf 保证（带 tools / 超长 / 不可序列化），
  * 本文件只负责存取，不重新解释请求。
  */
-import { mkdir } from 'node:fs/promises'
+import { chmod, mkdir } from 'node:fs/promises'
+import type { SecretVault } from './secret-vault.ts'
 import { dirname } from 'node:path'
 import type { CachePolicy } from '../core/types.ts'
 import { LruTtlCache } from '../core/response-cache.ts'
@@ -65,12 +66,16 @@ export function localDayKey(now: number): string {
 }
 
 /** 建一个响应缓存；SQLite 不可用时静默降级到内存。 */
-export async function createResponseCache(options: { directory: string, policy: CachePolicy }): Promise<ResponseCache> {
+export async function createResponseCache(options: { directory: string, policy: CachePolicy, vault?: SecretVault }): Promise<ResponseCache> {
   const filePath = options.directory + '/cache.sqlite'
   try {
     await mkdir(dirname(filePath), { recursive: true })
     const module = await import('node:sqlite')
-    return new SqliteResponseCache(new module.DatabaseSync(filePath), options.policy)
+    const cache = new SqliteResponseCache(new module.DatabaseSync(filePath), options.policy, options.vault)
+    // 缓存里是模型回复原文（可能夹带用户粘贴的密钥）；文件权限跟着收紧。
+    // Windows 上 chmod 基本是空操作，失败不影响使用；不 await，避免拖慢首帧。
+    chmod(filePath, 0o600).catch(() => {})
+    return cache
   } catch {
     return new MemoryResponseCache(options.policy)
   }
@@ -80,11 +85,13 @@ export async function createResponseCache(options: { directory: string, policy: 
 class SqliteResponseCache implements ResponseCache {
   private readonly db: import('node:sqlite').DatabaseSync
   private readonly policy: CachePolicy
+  private readonly vault: SecretVault | undefined
   private misses = 0
 
-  constructor(db: import('node:sqlite').DatabaseSync, policy: CachePolicy) {
+  constructor(db: import('node:sqlite').DatabaseSync, policy: CachePolicy, vault?: SecretVault) {
     this.db = db
     this.policy = policy
+    this.vault = vault !== undefined && vault.available() ? vault : undefined
     this.db.exec('PRAGMA journal_mode = WAL;')
     this.db.exec('PRAGMA busy_timeout = 3000;')
     this.db.exec(`
@@ -131,6 +138,14 @@ class SqliteResponseCache implements ResponseCache {
       this.misses += 1
       return undefined
     }
+    // 先解密再记账：密钥换了（或密文被改过）就当没命中，不能既回放又计一笔「省了钱」。
+    const rawBody = row.body instanceof Uint8Array ? row.body : new Uint8Array()
+    const body = this.vault === undefined ? rawBody : this.vault.openBytes(rawBody)
+    if (body === undefined) {
+      this.db.prepare('DELETE FROM response_cache WHERE key = ?').run(key)
+      this.misses += 1
+      return undefined
+    }
     this.db.prepare('UPDATE response_cache SET hits = hits + 1, last_used_at = ? WHERE key = ?').run(now, key)
     const inputTokens = Number(row.input_tokens ?? 0)
     const outputTokens = Number(row.output_tokens ?? 0)
@@ -144,9 +159,8 @@ class SqliteResponseCache implements ResponseCache {
         saved_tokens = saved_tokens + excluded.saved_tokens,
         saved_cost = saved_cost + excluded.saved_cost
     `).run(localDayKey(now), currency, inputTokens + outputTokens, savedAmount ?? 0)
-    const body = row.body
     return {
-      body: body instanceof Uint8Array ? body : new Uint8Array(),
+      body,
       contentType: String(row.content_type ?? 'application/json'),
       provider: String(row.provider ?? ''),
       model: String(row.model ?? ''),
@@ -157,6 +171,7 @@ class SqliteResponseCache implements ResponseCache {
   }
 
   async put(key: string, value: CachedResponse, now: number): Promise<void> {
+    const body = this.vault === undefined ? value.body : this.vault.sealBytes(value.body)
     this.db.prepare(`
       INSERT OR REPLACE INTO response_cache
         (key, provider, model, content_type, body, created_at, last_used_at, hits, input_tokens, output_tokens, saved_cost, currency)
@@ -166,7 +181,7 @@ class SqliteResponseCache implements ResponseCache {
       value.provider,
       value.model,
       value.contentType,
-      value.body,
+      body,
       now,
       now,
       value.inputTokens,
@@ -220,7 +235,7 @@ class SqliteResponseCache implements ResponseCache {
     try {
       this.db.close()
     } catch {
-      // 已关闭。
+      // 已关闭（或驱动拒绝重复关闭）：没有可回收的东西了。
     }
   }
 }

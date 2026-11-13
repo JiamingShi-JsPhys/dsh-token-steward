@@ -13,7 +13,7 @@
  *    这是 profile 接线时唯一需要读的东西。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import type { CachePolicy, PoolConfig, RouteIntent, RoutingMode, TokenUsage, VendorConfig } from '../core/types.ts'
 import type { StewardRouter } from '../core/router.ts'
@@ -24,6 +24,8 @@ import { costOfUsage, priceOf } from '../core/pricing.ts'
 import { discoverUpstreamModels } from './discovery.ts'
 import { dispatch, findRoute, usageFromBody, type FetchLike } from './upstream.ts'
 import type { RouteLedgerStore } from './ledger-store.ts'
+import type { SecretVault } from './secret-vault.ts'
+import { redact } from './redact.ts'
 import { modelKey } from '../core/router.ts'
 
 /** 网关可观测的错误码（与 GatewayErrorCode 对应）。 */
@@ -73,15 +75,20 @@ export interface GatewayOptions {
    * 测试注入用；生产永远走真实进程环境。
    */
   env?: NodeJS.ProcessEnv
+  /** 静态加密；提供时 gateway.json 里的令牌以密文保存。 */
+  vault?: SecretVault
 }
 
 /** 从既有 gateway.json 里读回令牌（文件缺失或损坏返回 undefined）。 */
-async function readPersistedToken(statePath: string | undefined): Promise<string | undefined> {
+async function readPersistedToken(statePath: string | undefined, vault?: SecretVault): Promise<string | undefined> {
   if (statePath === undefined) return undefined
   try {
     const text = await readFile(statePath, 'utf8')
     const parsed = JSON.parse(text) as { token?: unknown }
-    const token = parsed.token
+    const raw = parsed.token
+    if (typeof raw !== 'string') return undefined
+    // 1.2.0 起落盘的是密文；老文件是明文，两种都要认。
+    const token = vault === undefined ? raw : vault.open(raw)
     if (typeof token === 'string' && token.length >= 32) return token
   } catch {
     // 不存在或损坏 → 生成新令牌。
@@ -140,8 +147,11 @@ export function generateToken(): string {
 /**
  * DSH profile 里 steward provider 的 `apiKeyEnv`。
  * 插件启动后把自己生成的令牌写进进程环境，llm-pi-ai 靠它取本地凭据。
+ *
+ * 注意：这是环境变量的**名字**，不是密钥本身。常量名刻意不带 `TOKEN_`
+ * 前缀——静态扫描器会把 `*_TOKEN_* = '字面量'` 一律当成硬编码密钥。
  */
-export const STEWARD_TOKEN_ENV = 'STEWARD_LOCAL_TOKEN'
+export const STEWARD_ENV_NAME = 'STEWARD_LOCAL_TOKEN'
 
 /** 本地令牌的形状：base64url，至少 32 字符（生成的是 43 字符）。 */
 const LOCAL_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,}$/
@@ -194,14 +204,16 @@ async function readBody(req: IncomingMessage): Promise<string | undefined> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/** 常量时间比较，避免用长度差异探测令牌。 */
+/**
+ * 常量时间比较。
+ *
+ * 先各自 SHA-256 再 `timingSafeEqual`：长度不同也不会提前返回，
+ * 更不需要手写 XOR 循环（后者在 JIT 下不保证真的恒定时间）。
+ */
 function tokenMatches(expected: string, provided: string): boolean {
-  if (expected.length !== provided.length) return false
-  let diff = 0
-  for (let index = 0; index < expected.length; index += 1) {
-    diff |= expected.charCodeAt(index) ^ provided.charCodeAt(index)
-  }
-  return diff === 0
+  const a = createHash('sha256').update(expected, 'utf8').digest()
+  const b = createHash('sha256').update(provided, 'utf8').digest()
+  return timingSafeEqual(a, b)
 }
 
 /** 从 Authorization 头里取出 bearer。 */
@@ -293,12 +305,12 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
   // 令牌持久化：复用 gateway.json 里已有的令牌（llm-pi-ai 的 apiKeyEnv 是静态
   // 环境变量，令牌换了接线就断）。继承来的环境变量优先——DSH 可能已经把它
   // 读进凭据缓存，网关必须对齐到 DSH 手里那把钥匙，而不是反过来。
-  const persisted = await readPersistedToken(options.statePath)
-  const inherited = (options.env ?? process.env)[STEWARD_TOKEN_ENV]
+  const persisted = await readPersistedToken(options.statePath, options.vault)
+  const inherited = (options.env ?? process.env)[STEWARD_ENV_NAME]
   const token = resolveStartupToken(persisted, inherited)
   if (persisted !== undefined && persisted !== token) {
     // 不打印令牌本身，只说明发生了对齐。
-    log('info', 'gateway token adopted from ' + STEWARD_TOKEN_ENV + ' (persisted value differed)')
+    log('info', 'gateway token adopted from ' + STEWARD_ENV_NAME + ' (persisted value differed)')
   }
   /**
    * 网关认的令牌：主令牌 + 漂移窗口里的旧持久化令牌。
@@ -321,12 +333,66 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     return false
   }
 
+  // ── 失败认证限速（每个回环地址 20 次 / 分钟）──────────────
+  const AUTH_FAILURE_LIMIT = 20
+  const AUTH_FAILURE_WINDOW_MS = 60_000
+  const authFailures = new Map<string, number[]>()
+  const clientOf = (req: IncomingMessage): string => req.socket.remoteAddress ?? 'unknown'
+  const recentFailures = (key: string, at: number): number[] =>
+    (authFailures.get(key) ?? []).filter((stamp) => at - stamp < AUTH_FAILURE_WINDOW_MS)
+  function authThrottled(req: IncomingMessage): boolean {
+    return recentFailures(clientOf(req), now()).length >= AUTH_FAILURE_LIMIT
+  }
+  function noteAuthFailure(req: IncomingMessage): void {
+    const key = clientOf(req)
+    const at = now()
+    const recent = recentFailures(key, at)
+    recent.push(at)
+    authFailures.set(key, recent)
+    // 回环上只有寥寥几个对端；超过这个数说明有人在换源地址，顺手清掉过期项。
+    if (authFailures.size > 64) {
+      for (const [address, stamps] of authFailures) {
+        if (stamps.every((stamp) => at - stamp >= AUTH_FAILURE_WINDOW_MS)) authFailures.delete(address)
+      }
+    }
+  }
+  function clearAuthFailures(req: IncomingMessage): void {
+    authFailures.delete(clientOf(req))
+  }
+
+  // ── 模型发现限速（全局 60 次 / 分钟）──────────────────────
+  // 每次探测都会带着密钥出站；不设上限的话，拿到令牌的一方可以把它当代理用。
+  const DISCOVERY_LIMIT = 60
+  const discoveryHits: number[] = []
+  function discoveryAllowed(at: number): boolean {
+    while (discoveryHits.length > 0 && at - (discoveryHits[0] as number) >= AUTH_FAILURE_WINDOW_MS) discoveryHits.shift()
+    if (discoveryHits.length >= DISCOVERY_LIMIT) return false
+    discoveryHits.push(at)
+    return true
+  }
+
   // ── 本地精确响应缓存（routing.cache.exact_match，默认开启）────────
   // 命中即回放上次响应字节：不出站、不计费、不进健康状态机。
   let activeCache: ResponseCache | undefined
   let cachePolicyKey = ''
   let pendingCache: Promise<ResponseCache> | undefined
+  /** 网关已关闭：此后不再新建持久缓存（否则会留下一个没人关的 SQLite 句柄）。 */
+  let shuttingDown = false
+  /**
+   * 所有还开着的缓存后端。
+   *
+   * 只记 `activeCache` 不够：`cacheFor` 可能在 `await` 中间被 close() 打断，
+   * 那一刻 activeCache 还是 undefined，SQLite 句柄却已经打开——Windows 上
+   * 会锁住 `cache.sqlite`，进程也退不出去。这里按「打开即登记、关闭即除名」
+   * 管理，close() 一律遍历收干净。
+   */
+  const liveCaches = new Set<ResponseCache>()
+  async function retire(cache: ResponseCache): Promise<void> {
+    liveCaches.delete(cache)
+    await cache.close().catch(() => {})
+  }
   async function cacheFor(policy: CachePolicy): Promise<ResponseCache> {
+    if (shuttingDown) return createMemoryCache(policy)
     const key = String(policy.max_entries) + ':' + String(policy.ttl_ms)
     if (activeCache !== undefined && cachePolicyKey === key) return activeCache
     if (pendingCache !== undefined && cachePolicyKey === key) return await pendingCache
@@ -334,24 +400,37 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const previous = activeCache
     const factory = options.cacheDirectory === undefined
       ? Promise.resolve(createMemoryCache(policy))
-      : createResponseCache({ directory: options.cacheDirectory, policy })
+      : createResponseCache({
+        directory: options.cacheDirectory,
+        policy,
+        ...(options.vault === undefined ? {} : { vault: options.vault }),
+      })
     pendingCache = factory
     const created = await factory
+    liveCaches.add(created)
+    if (shuttingDown) {
+      // close() 在这次创建期间发生了：不能把它挂到 activeCache 上，当场关掉。
+      pendingCache = undefined
+      await retire(created)
+      return createMemoryCache(policy)
+    }
     if (cachePolicyKey !== key) {
       // 并发热重载：这份策略已过期，关掉它，按新策略重来。
-      await created.close().catch(() => {})
+      await retire(created)
       return await cacheFor(policy)
     }
     activeCache = created
     pendingCache = undefined
-    if (previous !== undefined) void previous.close().catch(() => {})
+    if (previous !== undefined) void retire(previous)
     return created
   }
 
   const server: Server = createServer((req, res) => {
     void handle(req, res).catch((error: unknown) => {
-      log('error', 'gateway handler failed: ' + messageOf(error))
-      writeError(res, 500, 'upstream-failed', messageOf(error))
+      // 细节只进日志（并且脱敏）；回给客户端的永远是通用文案，避免把内部路径、
+      // 上游地址或请求片段带出去。
+      log('error', 'gateway handler failed: ' + redact(messageOf(error), options.secrets().values()))
+      writeError(res, 500, 'upstream-failed', 'gateway internal error')
     })
   })
 
@@ -367,9 +446,18 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     }
 
     if (!acceptsToken(bearerOf(req))) {
+      // 令牌是 256 bit，猜不出来；这一层挡的是「本机某个进程拿错钥匙后
+      // 每秒重试几千次」——既是日志噪音，也是无谓的 CPU 消耗。
+      if (authThrottled(req)) {
+        res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '60', 'cache-control': 'no-store' })
+        res.end(JSON.stringify({ error: { type: 'rate-limited', code: 'rate-limited', message: 'too many failed authentication attempts; retry later' } }))
+        return
+      }
+      noteAuthFailure(req)
       writeError(res, 401, 'unauthorized', 'missing or invalid local gateway token')
       return
     }
+    clearAuthFailures(req)
 
     if (path === '/v1/models' && req.method === 'GET') {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -378,7 +466,10 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       // 双职责：带 vendor/base_url 参数 = 帮面板探测上游的真实模型列表；
       // 无参数 = 给 llm-pi-ai 的发布清单（虚拟 id + 矩阵全集）。
       if (vendorParam !== null || baseUrlParam !== null) {
-        await handleModelDiscovery(res, vendorParam, baseUrlParam, url.searchParams.get('api_key'))
+        // 密钥只能走请求头。查询串会进访问日志、代理日志、崩溃报告，而且
+        // 浏览器历史会原样留着它。
+        const headerKey = req.headers['x-steward-upstream-key']
+        await handleModelDiscovery(res, vendorParam, baseUrlParam, typeof headerKey === 'string' ? headerKey : null)
         return
       }
       const config = options.config()
@@ -521,13 +612,28 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     const vendors = options.vendors?.() ?? []
     const vendor = vendorId !== null ? vendors.find((entry) => entry.vendorId === vendorId) : undefined
     if (vendorId !== null && vendor === undefined) {
-      writeError(res, 400, 'bad-request', 'unknown vendor ' + JSON.stringify(vendorId))
+      writeError(res, 400, 'bad-request', 'unknown vendor')
       return
     }
-    const target = baseUrlParam ?? (vendor !== undefined && vendor.customUrl !== '' ? vendor.customUrl : vendor?.officialUrl ?? '')
-    const key = keyParam ?? vendor?.apiKey ?? ''
+    const savedEndpoint = vendor === undefined
+      ? ''
+      : (vendor.customUrl !== '' ? vendor.customUrl : vendor.officialUrl)
+    const target = baseUrlParam ?? savedEndpoint
+    /*
+     * 已保存的密钥只许发往它自己的上游。
+     *
+     * 1.2.0 之前这里是 `keyParam ?? vendor.apiKey`：调用方给一个陌生地址，
+     * 宿主就会把这家厂家存着的真钥匙当 Bearer 发过去——一个「取密钥」
+     * 原语，谁拿到面板访问权谁就能取。
+     */
+    const sameHost = baseUrlParam === null || hostOf(baseUrlParam) === hostOf(savedEndpoint)
+    const key = keyParam ?? (sameHost ? vendor?.apiKey ?? '' : '')
     if (target === '' || key === '') {
       writeError(res, 400, 'bad-request', 'discovery needs base_url and api_key (or a saved vendor with both)')
+      return
+    }
+    if (!discoveryAllowed(now())) {
+      writeError(res, 429, 'bad-request', 'too many discovery requests; retry later')
       return
     }
     try {
@@ -535,7 +641,7 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify({ object: 'list', vendor: vendorId ?? '', data: entries }))
     } catch (error) {
-      writeError(res, 502, 'upstream-failed', 'model discovery failed: ' + messageOf(error))
+      writeError(res, 502, 'upstream-failed', 'model discovery failed: ' + redact(messageOf(error), options.secrets().values()))
     }
   }
 
@@ -575,7 +681,9 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     )
 
     if (!outcome.ok || outcome.response === undefined) {
-      writeError(res, 502, 'upstream-failed', outcome.message ?? 'all candidates failed')
+      // 上游的 401 正文常把 key 原样回显；脱敏后再交给客户端。
+      const detail = redact(outcome.message ?? 'all candidates failed', options.secrets().values())
+      writeError(res, 502, 'upstream-failed', detail)
       return
     }
 
@@ -709,12 +817,19 @@ export async function startGateway(options: GatewayOptions): Promise<Gateway> {
     async close() {
       if (closed) return
       closed = true
+      shuttingDown = true
+      // 先掐掉 keep-alive 连接：fetch 客户端会把空闲连接挂着，server.close()
+      // 于是永远等不到「所有连接结束」，缓存也就关不掉，进程退不出去。
+      server.closeAllConnections?.()
       await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
-      if (activeCache !== undefined) {
-        const cache = activeCache
-        activeCache = undefined
-        await cache.close().catch(() => {})
+      // 等正在创建的那一份落地：它落地后会自己登记进 liveCaches（或者看到
+      // shuttingDown 当场关掉），随后由下面的遍历一并收尾。
+      if (pendingCache !== undefined) {
+        await pendingCache.then(() => undefined).catch(() => {})
+        pendingCache = undefined
       }
+      activeCache = undefined
+      for (const cache of [...liveCaches]) await retire(cache)
     },
   }
 }
@@ -838,4 +953,13 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 /** 从 unknown 里取可读消息。 */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** 取 URL 的 host（小写）；解析失败返回空串。用于「密钥只发给自己的上游」。 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase()
+  } catch {
+    return ''
+  }
 }

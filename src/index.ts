@@ -32,11 +32,13 @@ import { createRouteLedgerStore } from './host/ledger-store.ts'
 import { createRouter, type StewardRouter } from './core/router.ts'
 import { inferIntent } from './core/intent.ts'
 import { credentialKind, resolveCredential } from './host/credentials.ts'
-import { publishedModelIds, startGateway, STEWARD_TOKEN_ENV, type Gateway } from './host/gateway.ts'
+import { publishedModelIds, startGateway, STEWARD_ENV_NAME, type Gateway } from './host/gateway.ts'
 import { persistUserTokenEnv } from './host/token-env.ts'
 import { makePanelRoutes } from './host/routes.ts'
 import { readUsageProjection } from './host/usage-bridge.ts'
 import { writeFileAtomic } from './host/atomic-file.ts'
+import { createSecretVault } from './host/secret-vault.ts'
+import { redact } from './host/redact.ts'
 import type { GatewayState, ImportScope, PoolConfig, RouteIntent, RoutingMode } from './core/types.ts'
 
 /**
@@ -45,7 +47,7 @@ import type { GatewayState, ImportScope, PoolConfig, RouteIntent, RoutingMode } 
  * 定义在 gateway 侧：网关启动时需要先读它——DSH 可能已经用它取过凭据，
  * 网关必须对齐到 DSH 手里那把钥匙（见 resolveStartupToken）。
  */
-export { STEWARD_TOKEN_ENV } from './host/gateway.ts'
+export { STEWARD_ENV_NAME } from './host/gateway.ts'
 
 /** 插件名（cordis 行 id 与日志前缀）。 */
 export const name = 'token-steward'
@@ -62,6 +64,10 @@ export interface StewardConfigFields {
   gatewayPort?: unknown
   /** 启动时把网关自动写进 DSH 的模型菜单；默认开。 */
   autoWire?: unknown
+  /** 把网关令牌写回 Windows 用户环境变量；默认关（见 SECURITY.md）。 */
+  syncTokenEnv?: unknown
+  /** 落盘密钥用 AES-256-GCM 加密；默认开。 */
+  encryptAtRest?: unknown
 }
 
 /** 解析后的配置。 */
@@ -72,6 +78,8 @@ export interface ResolvedConfig {
   usagePollMs: number
   gatewayPort: number
   autoWire: boolean
+  syncTokenEnv: boolean
+  encryptAtRest: boolean
 }
 
 /** 默认保留天数。 */
@@ -137,6 +145,11 @@ export function resolveConfig(config?: StewardConfigFields): ResolvedConfig {
     usagePollMs: Math.max(2_000, Math.round(readNumber(config?.usagePollMs, DEFAULT_USAGE_POLL_MS))),
     gatewayPort: Math.max(0, Math.round(readNumber(config?.gatewayPort, DEFAULT_GATEWAY_PORT))),
     autoWire: readBoolean(config?.autoWire, true),
+    // 默认关：把令牌永久写进 HKCU\Environment 会让之后启动的每个进程都继承它，
+    // 而且 reg.exe 的命令行在写入瞬间对本机其它进程可见。DSH 侧的取钥匙问题
+    // 由 credentials.set 解决，不再依赖这一道。
+    syncTokenEnv: readBoolean(config?.syncTokenEnv, false),
+    encryptAtRest: readBoolean(config?.encryptAtRest, true),
   }
 }
 
@@ -278,7 +291,8 @@ export async function apply(ctx: {
     // 诊断写不进去也不阻断挂载。
   }
   const settings = resolveConfig(config)
-  const log = ctx.logger?.('token-steward') ?? { info() {}, warn() {}, error() {} }
+  const hostLog = ctx.logger?.('token-steward')
+  const log = hostLog === undefined ? { info() {}, warn() {}, error() {} } : redactingLogger(hostLog as unknown as HostLogger)
   if (!settings.enabled) {
     log.info('disabled by configuration; nothing mounted')
     return
@@ -287,11 +301,19 @@ export async function apply(ctx: {
   const directory = dataDirectory()
   await mkdir(directory, { recursive: true }).catch(() => {})
 
+  // ── 静态加密 ────────────────────────────────────────────
+  // 密钥在 $DSH_HOME/token-steward/.vault-key（0600）。拿不到就退化为不加密，
+  // 功能照常，但会在日志里明确说一句——不静默降级。
+  const vault = settings.encryptAtRest ? await createSecretVault(directory) : undefined
+  if (settings.encryptAtRest && vault !== undefined && !vault.available()) {
+    log.warn('secret vault is unavailable (%s); falling back to plaintext storage', vault.keyPath())
+  }
+
   // ── 配置（vendors.json 优先，model_pool.yaml 作为高级回退）───
   const decode = await loadYamlDecoder()
   const loader = createPoolFileLoader(settings.poolPath, decode)
   await loader.load(Date.now())
-  const vendorStore = createVendorStore(directory)
+  const vendorStore = createVendorStore(directory, vault?.available() === true ? { vault } : {})
   let vendorDoc: VendorsDocument = await vendorStore.load()
   let usingVendors = vendorDoc.vendors.length > 0
   let configValue: PoolConfig | undefined = currentPool()
@@ -423,14 +445,19 @@ export async function apply(ctx: {
     }
     try {
       const text = await readFile(file, 'utf8')
-      const literalKey = credentialKind(vendor.apiKey) === 'unknown' || credentialKind(vendor.apiKey) === 'literal'
-        ? vendor.apiKey.replace(/^literal:/, '')
-        : ''
+      /*
+       * 1.2.0 起不再把明文密钥写进 profile。
+       *
+       * `cordis.patch.yml` 是用户手写的配置，会被备份、同步、提交到 dotfile 仓库，
+       * 也可能被 Agent 的文件工具整份读走；而 llm-pi-ai 的 provider schema
+       * **只认 apiKeyEnv**，这里写进去的 `apiKey` 对 DSH 完全无效，纯粹是多一份
+       * 明文副本。已有的 `apiKey` 保持原样（不删用户的数据），只是不再新增。
+       */
       const input = syncInputFromVendor(vendor, vendorEndpoint(vendor))
       // 写回时按地址认领已有的 provider 键：同 id 不在、但地址一样的，就地更新，
       // 别在同一份 profile 里留两份同一家上游。
       const targetId = resolveSyncVendorId(codec.parse(text), input.vendorId, input.baseUrl)
-      const payload = { ...input, vendorId: targetId, apiKey: literalKey }
+      const payload = { ...input, vendorId: targetId, apiKey: '' }
       // 优先用能保住注释的写法：profile 是用户手写的，重排+丢注释等于毁了他的配置。
       const written = await writeProviderPreservingComments(text, payload)
       if (written !== undefined) await writeFileAtomic(file, written)
@@ -462,18 +489,18 @@ export async function apply(ctx: {
       set?: (ref: string, value: string) => Promise<unknown>
     } | undefined
     if (credentials === undefined || typeof credentials.set !== 'function') {
-      log.warn('credentials service is absent; the settings page may still report %s as missing', STEWARD_TOKEN_ENV)
+      log.warn('credentials service is absent; the settings page may still report %s as missing', STEWARD_ENV_NAME)
       return
     }
     try {
       // 已经是这个值就别写：凭据库的每次 set 都会触发 reference-updated，
       // 每次启动都无谓地改一遍文件既不优雅也没必要。
       const current = typeof credentials.resolve === 'function'
-        ? await credentials.resolve(STEWARD_TOKEN_ENV)
+        ? await credentials.resolve(STEWARD_ENV_NAME)
         : undefined
       if (current?.value === token) return
-      await credentials.set(STEWARD_TOKEN_ENV, token)
-      log.info('gateway token stored under %s in the host credential store', STEWARD_TOKEN_ENV)
+      await credentials.set(STEWARD_ENV_NAME, token)
+      log.info('gateway token stored under %s in the host credential store', STEWARD_ENV_NAME)
     } catch (error) {
       log.warn('cannot store the gateway token in the credential store: %s', messageOf(error))
     }
@@ -491,7 +518,7 @@ export async function apply(ctx: {
    */
   async function autoWireHarness(baseUrl: string): Promise<void> {
     if (!settings.autoWire) return
-    const spec: StewardWireSpec = { baseUrl, apiKeyEnv: STEWARD_TOKEN_ENV }
+    const spec: StewardWireSpec = { baseUrl, apiKeyEnv: STEWARD_ENV_NAME }
     try {
       const files = await harnessPatchFiles()
       if (files.length === 0) {
@@ -629,6 +656,7 @@ export async function apply(ctx: {
       log: (level, message) => { log[level]('%s', message) },
       port,
       statePath,
+      ...(vault === undefined ? {} : { vault }),
       // SQLite 响应缓存落在插件数据目录：重启后仍可命中，命中即 0 token。
       cacheDirectory: directory,
       // composer 里选了「管家·极致便宜」这类模型 → 默认模式跟着改并落盘。
@@ -655,19 +683,18 @@ export async function apply(ctx: {
       // 令牌是网关自己生成的，只有我们手里有——必须由我们写进进程环境。
       // 指望用户手工 export 是不可靠的：换个启动方式（比如从另一个 shell 拉起）
       // 变量就不在了，DSH 会认为这家没有密钥，直接把「管家」从模型菜单里藏掉。
-      process.env[STEWARD_TOKEN_ENV] = gateway.token()
+      process.env[STEWARD_ENV_NAME] = gateway.token()
       // 写进宿主凭据库：进程环境对 DSH 的凭据层是不可见的（启动快照），
       // 不写这一步设置页永远报「未检测到环境变量」。
       await publishTokenToHost(gateway.token())
-      // 第三道保障：把当前令牌写回用户环境变量。下次从任何方式启动，继承到的
-      // 都是网关照认的那把钥匙，而不是某个旧版本留下的值。写入失败不影响本次运行。
-      //
-      // 必须**无条件写**：启动器（relaunch.ps1）会把 gateway.json 的令牌注入进程
-      // 环境，此时「继承值 == 网关令牌」成立，但系统里的用户环境变量可能仍是旧值；
-      // 只在「不一致才写」会漏掉这条路径，下次从开始菜单启动又漂移回去。
-      void persistUserTokenEnv(gateway.token(), STEWARD_TOKEN_ENV).then((written) => {
-        if (!written) log.warn('cannot sync %s to the user environment; env wiring may drift', STEWARD_TOKEN_ENV)
-      })
+      // 第三道保障（默认关闭）：把当前令牌写回用户环境变量。开启后，之后启动的
+      // 每个进程都会继承这枚令牌；写入瞬间它还会出现在 reg.exe 的命令行上。
+      // 只有用户显式配置 syncTokenEnv=true 才做。
+      if (settings.syncTokenEnv) {
+        void persistUserTokenEnv(gateway.token(), STEWARD_ENV_NAME).then((written) => {
+          if (!written) log.warn('cannot sync %s to the user environment; env wiring may drift', STEWARD_ENV_NAME)
+        })
+      }
       const state: GatewayState = {
         appliedAt: Date.now(),
         pid: process.pid,
@@ -677,7 +704,9 @@ export async function apply(ctx: {
         modelIds: gatewayModelIds(configValue),
         token: gateway.token(),
       }
-      await writeFileAtomic(statePath, JSON.stringify(state, null, 2) + '\n')
+      // 令牌以密文落盘；端口、地址、模型清单保持可读，方便用户排查接线。
+      const onDisk = vault?.available() === true ? { ...state, token: vault.seal(state.token) } : state
+      await writeFileAtomic(statePath, JSON.stringify(onDisk, null, 2) + '\n', { mode: 0o600 })
       log.info('gateway ready at %s (%d models)', state.baseUrl, state.modelIds.length)
       await autoWireHarness(state.baseUrl)
     } catch (error) {
@@ -916,7 +945,9 @@ export async function apply(ctx: {
   watcher.start()
 
   // ── 回收 ────────────────────────────────────────────────
-  const teardown = (): void => {
+  // 返回 Promise：宿主只关心「调用过」，测试与进程退出关心「真的关完了」
+  // （SQLite 句柄不关，Windows 上会锁住 cache.sqlite，进程也退不出去）。
+  const teardown = async (): Promise<void> => {
     watcher.stop()
     for (const dispose of disposers) {
       try {
@@ -928,13 +959,16 @@ export async function apply(ctx: {
     if (gateway !== undefined) {
       const closing = gateway
       gateway = undefined
-      void closing.close().catch(() => {})
+      await closing.close().catch(() => {})
     }
-    void ledger.flush().catch(() => {})
+    await ledger.flush().catch(() => {})
   }
 
-  if (typeof ctx.effect === 'function') ctx.effect(() => teardown, 'token-steward: runtime')
-  else log.warn('ctx.effect is unavailable; resources rely on process exit')
+  if (typeof ctx.effect === 'function') {
+    // 直接返回 teardown 本身：宿主会在卸载时调用它，返回的 Promise 被忽略；
+    // 测试拿到同一个函数，可以 await 它确认 SQLite / 端口真的关完了。
+    ctx.effect(() => teardown as unknown as () => void, 'token-steward: runtime')
+  } else log.warn('ctx.effect is unavailable; resources rely on process exit')
 }
 
 /**
@@ -975,6 +1009,28 @@ async function persistMode(path: string, mode: RoutingMode): Promise<void> {
     : text + (text.endsWith('\n') ? '' : '\n') + 'routing:\n  mode: ' + mode + '\n'
   if (next === text) return
   await writeFileAtomic(path, next)
+}
+
+/** 宿主日志器的形状（只用到三个级别）。 */
+interface HostLogger {
+  info(...args: unknown[]): void
+  warn(...args: unknown[]): void
+  error(...args: unknown[]): void
+}
+
+/**
+ * 给宿主日志器套一层脱敏。
+ *
+ * 每个字符串参数都过一遍 `redact`：模板串（`'vendor %s'`）与参数分开处理，
+ * 既不会打乱 printf 占位符，也覆盖「有人把整段上游响应拼进日志」的情况。
+ */
+function redactingLogger(base: HostLogger): HostLogger {
+  const clean = (args: unknown[]): unknown[] => args.map((arg) => (typeof arg === 'string' ? redact(arg) : arg))
+  return {
+    info: (...args) => base.info(...clean(args)),
+    warn: (...args) => base.warn(...clean(args)),
+    error: (...args) => base.error(...clean(args)),
+  }
 }
 
 /** 从 unknown 里取可读消息。 */

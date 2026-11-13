@@ -147,10 +147,11 @@ test('发现端点：带 vendor 参数时探测上游 /models，目录命中的�
   })
 })
 
-test('发现端点：base_url + api_key 参数优先；错误令牌照常 401', async () => {
+test('发现端点：base_url 参数 + 请求头里的密钥优先；错误令牌照常 401', async () => {
   await withDiscovery(async (baseUrl, token) => {
-    const response = await fetch(baseUrl + '/models?base_url=' + encodeURIComponent('https://relay.example/v1') + '&api_key=' + encodeURIComponent('sk-relay'), {
-      headers: { authorization: 'Bearer ' + token },
+    // 1.2.0 起密钥只走请求头：查询串会进访问日志与浏览器历史。
+    const response = await fetch(baseUrl + '/models?base_url=' + encodeURIComponent('https://relay.example/v1'), {
+      headers: { authorization: 'Bearer ' + token, 'x-steward-upstream-key': 'sk-relay' },
     })
     assert.equal(response.status, 200)
 
@@ -158,6 +159,18 @@ test('发现端点：base_url + api_key 参数优先；错误令牌照常 401', 
       headers: { authorization: 'Bearer wrong' },
     })
     assert.equal(rejected.status, 401, '发现端点同样受本地令牌保护')
+  })
+})
+
+test('发现端点：调用方换了地址就不能借用已保存的密钥', async () => {
+  await withDiscovery(async (baseUrl, token, upstreamCalls) => {
+    // vendor=deepseek 的已保存地址是 api.deepseek.com；这里指定 relay.example，
+    // 又没有自带密钥 —— 必须 400，而不是把 deepseek 的钥匙发给 relay。
+    const response = await fetch(baseUrl + '/models?vendor=deepseek&base_url=' + encodeURIComponent('https://attacker.example/v1'), {
+      headers: { authorization: 'Bearer ' + token },
+    })
+    assert.equal(response.status, 400)
+    assert.equal(upstreamCalls.length, 0, '绝不能带着别人的钥匙出站')
   })
 })
 

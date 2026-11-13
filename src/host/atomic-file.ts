@@ -8,7 +8,7 @@
  *
  * 全部异步（fs/promises），不阻塞宿主事件循环。
  */
-import { readFile, rename, mkdir, open, unlink, stat } from 'node:fs/promises'
+import { readFile, rename, mkdir, open, unlink, stat, chmod } from 'node:fs/promises'
 import { dirname, join, basename } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
@@ -22,11 +22,25 @@ export async function readFileIfExists(path: string): Promise<string | undefined
   }
 }
 
+/**
+ * 写入选项。
+ *
+ * `mode` 默认 0600：本插件的落盘文件（vendors.json / gateway.json / 台账 /
+ * 缓存）都可能带密钥或用户内容，没有一个是该给同机其它用户看的。
+ * 权限必须在**创建临时文件时**就给，而不是 rename 之后再 chmod——后者会留下
+ * 一个「内容已落盘、权限还没收紧」的窗口。
+ */
+export interface AtomicWriteOptions {
+  /** 文件权限，默认 0o600。传 0o644 可显式放宽。 */
+  mode?: number
+}
+
 /** 原子写：临时文件 + fsync + rename。 */
-export async function writeFileAtomic(path: string, data: string): Promise<void> {
+export async function writeFileAtomic(path: string, data: string, options: AtomicWriteOptions = {}): Promise<void> {
+  const mode = options.mode ?? 0o600
   await mkdir(dirname(path), { recursive: true })
   const temporary = join(dirname(path), '.' + basename(path) + '.' + randomBytes(6).toString('hex') + '.tmp')
-  const handle = await open(temporary, 'w')
+  const handle = await open(temporary, 'w', mode)
   try {
     await handle.writeFile(data, 'utf8')
     // fsync 之后 rename，才保证「rename 成功」等价于「内容已落盘」。
@@ -40,6 +54,10 @@ export async function writeFileAtomic(path: string, data: string): Promise<void>
     await unlink(temporary).catch(() => {})
     throw error
   }
+  // 目标文件可能是历史版本留下的宽权限文件；rename 会连同 inode 一起换掉，
+  // 但 Windows / 某些网络盘上 rename 不保证继承权限，这里再收紧一次。
+  // Windows 上 chmod 基本是空操作，失败不影响写入。
+  if (process.platform !== 'win32') await chmod(path, mode).catch(() => {})
 }
 
 /** 重试次数：Windows 上并发 rename 同一个目标会短暂 EPERM/EEXIST。 */

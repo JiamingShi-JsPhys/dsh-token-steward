@@ -16,6 +16,24 @@ import { createServer } from 'node:http'
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 /** 导入打包后的 Host 半区。 */
+/**
+ * 收尾删临时目录。
+ *
+ * Windows 上 SQLite 关闭 WAL 之后，文件句柄可能还会被系统多持有几十毫秒，
+ * 立刻 rm 会 EBUSY；重试几次即可，这不是被测行为。
+ */
+async function removeTree(directory: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await rm(directory, { recursive: true, force: true })
+      return
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'EBUSY' || attempt === 19) throw error
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+}
+
 async function loadHost(): Promise<Record<string, unknown>> {
   const url = new URL('file:///' + join(ROOT, 'lib/index.js').replace(/\\/g, '/'))
   return await import(url.href) as Record<string, unknown>
@@ -64,7 +82,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 
   const routes: Array<{ path: string, handler: (req: never, res: never) => void }> = []
   const logs: string[] = []
-  let teardown: (() => void) | undefined
+  let teardown: (() => void | Promise<void>) | undefined
 
   try {
     await mkdir(join(home, 'token-steward'), { recursive: true })
@@ -102,7 +120,12 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     }
     assert.equal(state.host, '127.0.0.1')
     assert.ok(state.port > 0)
-    assert.ok(state.token.length >= 40)
+    // 1.2.0 起 gateway.json 里的令牌是密文，先解开再用。
+    const { createSecretVault } = await import('../src/host/secret-vault.ts')
+    const vault = await createSecretVault(join(home, 'token-steward'), { env: {} })
+    const token = vault.available() ? vault.open(state.token) : state.token
+    assert.ok(typeof token === 'string' && token.length >= 40)
+    assert.ok(state.token.startsWith('enc:v1:'), '令牌必须加密落盘')
     assert.deepEqual(
       state.modelIds.slice(0, 4),
       ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free'],
@@ -115,7 +138,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     assert.equal(denied.status, 401)
 
     const models = await fetch(state.baseUrl + '/models', {
-      headers: { authorization: 'Bearer ' + state.token },
+      headers: { authorization: 'Bearer ' + String(token) },
     })
     assert.equal(models.status, 200)
     const list = await models.json() as { data: Array<{ id: string }> }
@@ -173,9 +196,13 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 
       const gatewayInfo = await fetch(base + '/gateway')
       const gatewayBody = await gatewayInfo.json() as { gateway: { token: string } }
-      assert.equal(gatewayBody.gateway.token, state.token)
+      assert.equal(gatewayBody.gateway.token, token, '面板拿到的是明文令牌，磁盘上的是密文')
 
-      const mode = await fetch(base + '/mode', { method: 'POST', body: JSON.stringify({ mode: 'max_power' }) })
+      const mode = await fetch(base + '/mode', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'max_power' }),
+      })
       assert.equal(mode.status, 200)
 
       // 模式要写回配置文件，重启后仍生效。
@@ -184,7 +211,10 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 
       const beforeReload = await (await fetch(base + '/snapshot')).json() as { snapshot: { revision: number } }
 
-      const reload = await fetch(base + '/reload', { method: 'POST' })
+      const reload = await fetch(base + '/reload', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      })
       const reloadBody = await reload.json() as { ok: boolean, status: string }
       assert.equal(reloadBody.ok, true)
       assert.equal(reloadBody.status, 'ok')
@@ -205,13 +235,16 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 
     // 收尾不能抛错，且要放掉端口。
     assert.equal(typeof teardown, 'function')
-    teardown?.()
+    await teardown?.()
     await new Promise((resolve) => setTimeout(resolve, 50))
   } finally {
+    // 断言失败也要真的拆掉网关：否则后台连接会锁住临时目录，把真正的原因
+    // （断言）盖成一条 EBUSY。
+    await Promise.resolve(teardown?.()).catch(() => {})
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
     delete process.env.STEWARD_TEST_KEY
-    await rm(home, { recursive: true, force: true })
+    await removeTree(home)
   }
 });
 
@@ -220,7 +253,7 @@ test('首次安装：没有可用配置也把网关拉起来，面板照常注�
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = home
 
-  let teardown: (() => void) | undefined
+  let teardown: (() => void | Promise<void>) | undefined
   try {
     await mkdir(join(home, 'token-steward'), { recursive: true })
     await writeFile(join(home, 'token-steward', 'model_pool.yaml'), 'version: 1\nproviders: []\n')
@@ -243,11 +276,11 @@ test('首次安装：没有可用配置也把网关拉起来，面板照常注�
     assert.ok(state.port > 0)
     assert.deepEqual(state.modelIds.slice(0, 4), ['steward:frugal', 'steward:balanced', 'steward:max_power', 'steward:free'])
   } finally {
-    teardown?.()
+    await teardown?.()
     await new Promise((resolve) => setTimeout(resolve, 50))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
-    await rm(home, { recursive: true, force: true })
+    await removeTree(home)
   }
 });
 
@@ -258,7 +291,7 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
 
   const profileDir = join(home, 'profiles', 'desktop')
   const patchFile = join(profileDir, 'cordis.patch.yml')
-  let teardown: (() => void) | undefined
+  let teardown: (() => void | Promise<void>) | undefined
   try {
     await mkdir(join(home, 'token-steward'), { recursive: true })
     await writeFile(join(home, 'token-steward', 'model_pool.yaml'), 'version: 1\nproviders: []\n')
@@ -309,13 +342,17 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
     assert.ok(text.includes('# 用户自己的注释'), '注释必须保留')
     assert.ok(text.includes('agnes-3.0-flash'), '别的上游不能动')
     // 令牌要进宿主凭据库：只写 process.env 的话，设置页永远显示「未检测到环境变量」。
-    assert.equal(stored.get('STEWARD_LOCAL_TOKEN'), state.token, '令牌应写进 credentials')
+    // gateway.json 里的令牌是密文（1.2.0 起），比对前先用同一个密钥库解开。
+    const { createSecretVault } = await import('../src/host/secret-vault.ts')
+    const vault = await createSecretVault(join(home, 'token-steward'), { env: {} })
+    const onDiskToken = vault.available() ? vault.open(state.token) : state.token
+    assert.equal(stored.get('STEWARD_LOCAL_TOKEN'), onDiskToken, '令牌应写进 credentials')
   } finally {
-    teardown?.()
+    await teardown?.()
     await new Promise((resolve) => setTimeout(resolve, 50))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
-    await rm(home, { recursive: true, force: true })
+    await removeTree(home)
   }
 });
 
@@ -326,7 +363,7 @@ test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（
   process.env.STEWARD_LIVE_KEY = 'sk-live'
 
   const routes: Array<{ path: string, handler: (req: never, res: never) => void }> = []
-  let teardown: (() => void) | undefined
+  let teardown: (() => void | Promise<void>) | undefined
   try {
     await mkdir(join(home, 'token-steward'), { recursive: true })
     await writeFile(join(home, 'token-steward', 'model_pool.yaml'), POOL_YAML)
@@ -389,11 +426,11 @@ test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（
     }
   } finally {
     // 必须收尾：网关端口不关，node --test 会一直等到超时。
-    teardown?.()
+    await teardown?.()
     await new Promise((resolve) => setTimeout(resolve, 100))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
     delete process.env.STEWARD_LIVE_KEY
-    await rm(home, { recursive: true, force: true })
+    await removeTree(home)
   }
 });
