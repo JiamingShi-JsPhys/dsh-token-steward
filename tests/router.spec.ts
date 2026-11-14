@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { createRouter, filterReason, modelKey } from '../src/core/router.ts'
 import { canonicalModelId, parseVirtualModel } from '../src/core/intent.ts'
 import { intent, matrix, model, provider } from './fixtures.ts'
-import type { AttemptResult, PoolConfig } from '../src/core/types.ts'
+import type { AttemptResult, PoolConfig, RouteEventView } from '../src/core/types.ts'
 
 function fail(providerName: string, modelId: string, errorKind: NonNullable<AttemptResult['errorKind']>, requestId = 'r1'): AttemptResult {
   return { requestId, provider: providerName, model: modelId, ok: false, errorKind, latencyMs: 100, committed: false }
@@ -214,6 +214,32 @@ test('降级一次后再成功：事件记录完整降级链，并计入降级�
   assert.equal(snapshot.recent[0]?.degradedFrom.length, 1)
   assert.equal(snapshot.recent[0]?.degradedFrom[0]?.errorKind, 'rate-limit')
   assert.equal(snapshot.totals.degradedRequests, 1)
+})
+
+test('收口回调：final 事件（含降级链、模式、延迟）交给落盘台账', () => {
+  const events: RouteEventView[] = []
+  const router = createRouter(matrix(), { onRouteEvent: (event) => events.push(event) })
+  const planned = router.plan(intent(), 1_000, 'r1')
+  assert.ok(planned.ok)
+  const chosen = planned.decision.chosen
+  const fallback = planned.decision.fallbacks[0]
+  assert.ok(fallback)
+
+  // 未收口不回调：中间那些失败尝试只进降级链。
+  router.report(fail(chosen.provider, chosen.model, 'rate-limit'), 1_100)
+  assert.equal(events.length, 0)
+
+  router.report(ok(fallback.provider, fallback.model), 1_400)
+  assert.equal(events.length, 1)
+  const event = events[0]!
+  assert.equal(event.requestId, 'r1')
+  assert.equal(event.provider, fallback.provider)
+  assert.equal(event.model, fallback.model)
+  assert.equal(event.ok, true)
+  assert.equal(event.mode, router.getMode())
+  assert.equal(event.latencyMs, 400, '延迟是整次请求的收口时间，不是最后一次尝试')
+  assert.equal(event.degradedFrom.length, 1)
+  assert.equal(event.degradedFrom[0]?.errorKind, 'rate-limit')
 })
 
 test('已提交首字节后失败：不可降级，直接收口为失败事件', () => {

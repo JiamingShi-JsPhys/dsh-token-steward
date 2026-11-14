@@ -24,12 +24,12 @@ import { harnessProviders, harnessVendor, mergeImportedVendors, selectHarnessPro
 import { HARNESS_DEFAULT_MAX_TOKENS, resolveSyncVendorId, syncInputFromVendor, upsertHarnessProvider, type HarnessSyncInput } from './host/harness-sync.ts'
 import { stewardWired, wireStewardInText, type StewardWireSpec } from './host/harness-wire.ts'
 import { discoverUpstreamModels } from './host/discovery.ts'
-import { executeStewardAction, STEWARD_TOOL_PARAMETERS, type StewardActionArgs, type StewardToolDeps } from './host/agent-tools.ts'
+import { executeStewardAction, stewardToolParametersJsonSchema, type StewardActionArgs, type StewardToolDeps } from './host/agent-tools.ts'
 import { synthesizePool, templateVendors, vendorEndpoint, vendorIsRoutable } from './core/vendors.ts'
 import { DEFAULT_CACHE } from './core/pool-schema.ts'
 import { createPoolWatcher } from './host/pool-watch.ts'
 import { createRouteLedgerStore } from './host/ledger-store.ts'
-import { createRouter, type StewardRouter } from './core/router.ts'
+import { createRouter, type RouterOptions, type StewardRouter } from './core/router.ts'
 import { inferIntent } from './core/intent.ts'
 import { credentialKind, resolveCredential } from './host/credentials.ts'
 import { publishedModelIds, startGateway, STEWARD_ENV_NAME, type Gateway } from './host/gateway.ts'
@@ -303,8 +303,10 @@ export async function apply(ctx: {
   await mkdir(directory, { recursive: true }).catch(() => {})
 
   // ── 静态加密 ────────────────────────────────────────────
-  // 密钥在 $DSH_HOME/token-steward/.vault-key（0600）。拿不到就退化为不加密，
-  // 功能照常，但会在日志里明确说一句——不静默降级。
+  // 主密钥默认交给系统凭据存储（Windows DPAPI / macOS Keychain / Linux libsecret），
+  // 拿不到才落到用户配置目录（状态目录之外）。老版本留在状态目录里的 .vault-key
+  // 会在这一步被搬走并删除。全拿不到就退化为不加密，功能照常，
+  // 但会在日志里明确说一句——不静默降级。
   const vault = settings.encryptAtRest ? await createSecretVault(directory) : undefined
   if (settings.encryptAtRest && vault !== undefined && !vault.available()) {
     log.warn('secret vault is unavailable (%s); falling back to plaintext storage', vault.keyPath())
@@ -329,7 +331,13 @@ export async function apply(ctx: {
   function emptyPool(): PoolConfig {
     return synthesizePool([], vendorDoc.mode, DEFAULT_CACHE)
   }
-  let router: StewardRouter | undefined = createRouter(configValue ?? emptyPool(), undefined, undefined, panelRevision)
+  // ── 台账 ────────────────────────────────────────────────
+  // 路由引擎重建多次，回调必须是同一份台账：放在 router 之前创建。
+  const ledger = createRouteLedgerStore(directory, undefined, settings.retainDays)
+  const routerOptions: Partial<RouterOptions> = {
+    onRouteEvent: (event) => ledger.record(event),
+  }
+  let router: StewardRouter | undefined = createRouter(configValue ?? emptyPool(), routerOptions, undefined, panelRevision)
 
   /** 当前生效配置：厂家面板有内容时以 vendors.json 合成，否则回退 yaml。 */
   function currentPool(): PoolConfig | undefined {
@@ -357,7 +365,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
+    router = createRouter(configValue ?? emptyPool(), routerOptions, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('vendors saved (%d configured, %d routable)', merged.length, merged.filter(vendorIsRoutable).length)
     return { ok: true }
@@ -371,7 +379,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
+    router = createRouter(configValue ?? emptyPool(), routerOptions, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('vendor %s removed', vendorId)
     return { ok: true }
@@ -419,7 +427,7 @@ export async function apply(ctx: {
     await vendorStore.save(vendorDoc)
     usingVendors = vendorDoc.vendors.length > 0
     configValue = currentPool()
-    router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
+    router = createRouter(configValue ?? emptyPool(), routerOptions, router?.getMode(), panelRevision)
     await refreshSecrets()
     log.info('imported %d providers from DSH profiles', incoming.length)
     return { ok: true, imported: incoming.map((vendor) => vendor.vendorId) }
@@ -580,14 +588,14 @@ export async function apply(ctx: {
     usingVendors = vendorDoc.vendors.length > 0
     if (usingVendors) {
       configValue = currentPool()
-      router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
+      router = createRouter(configValue ?? emptyPool(), routerOptions, router?.getMode(), panelRevision)
       await refreshSecrets()
       return { ok: true, status: 'ok' }
     }
     const result = await loader.load(now)
     if (result.ok && result.config !== undefined) {
       configValue = result.config
-      router = createRouter(configValue, undefined, router?.getMode(), panelRevision)
+      router = createRouter(configValue, routerOptions, router?.getMode(), panelRevision)
       for (const warning of result.warnings) log.warn('config: %s', warning)
     }
     const state = loader.state()
@@ -626,8 +634,6 @@ export async function apply(ctx: {
   }
   await refreshSecrets()
 
-  // ── 台账 ────────────────────────────────────────────────
-  const ledger = createRouteLedgerStore(directory, undefined, settings.retainDays)
   await ledger.load()
 
   // ── 计量（只在面板轮询时读，避免常驻 IO）──────────────────
@@ -844,7 +850,7 @@ export async function apply(ctx: {
       vendorDoc = { ...vendorDoc, vendors }
       usingVendors = vendorDoc.vendors.length > 0
       configValue = currentPool()
-      router = createRouter(configValue ?? emptyPool(), undefined, router?.getMode(), panelRevision)
+      router = createRouter(configValue ?? emptyPool(), routerOptions, router?.getMode(), panelRevision)
       await vendorStore.save(vendorDoc)
       await refreshSecrets()
     },
@@ -884,8 +890,14 @@ export async function apply(ctx: {
       disposers.push(tools.register({
         name: 'token_steward_manage',
         description: '管理 Token 管家模型矩阵：添加/移除厂商、启用/停用模型、给模型打擅长标签、切换调度模式、按任务推荐该用哪个模型（含子代理档位）。改动立即生效（热重载）。',
-        parameters: STEWARD_TOOL_PARAMETERS,
-        output: { schema: { type: 'string' } },
+        // register() 要 raw JSON Schema（不是 defineTool 的 property-map）；
+        // output.render 也是硬校验项：没有它整条注册会抛 TypeError，
+        // 技能还在、工具静默消失。
+        parameters: stewardToolParametersJsonSchema(),
+        output: {
+          schema: { type: 'string' },
+          render: (_args: unknown, value: unknown) => [{ type: 'text', text: String(value) }],
+        },
         async execute(args: StewardActionArgs) {
           return executeStewardAction(toolDeps, args)
         },

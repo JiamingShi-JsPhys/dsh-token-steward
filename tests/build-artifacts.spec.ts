@@ -36,6 +36,8 @@ interface MountObservation {
   effects: string[]
   /** 注册的文案命名空间。 */
   localeNamespaces: string[]
+  /** 注册的文案字典（key 必须完整，见「续行」那条断言）。 */
+  localeDictionaries: Array<{ namespace: string, zh?: Record<string, string>, en?: Record<string, string> }>
   /** 插入的 style 标签。 */
   styleTags: Array<{ dataset: Record<string, string>, textContent: string }>
   /** 向宿主 require 的模块。 */
@@ -72,6 +74,7 @@ async function mountAgainstFakeHost(): Promise<MountObservation> {
   const injections: string[] = []
   const effects: string[] = []
   const localeNamespaces: string[] = []
+  const localeDictionaries: Array<{ namespace: string, zh?: Record<string, string>, en?: Record<string, string> }> = []
 
   const context = {
     effect(run: () => (() => void) | void, label?: string) {
@@ -93,7 +96,11 @@ async function mountAgainstFakeHost(): Promise<MountObservation> {
       spec: () => undefined,
     },
     locale: {
-      register(namespace: string) { localeNamespaces.push(namespace); return () => undefined },
+      register(namespace: string, dictionary?: { zh?: Record<string, string>, en?: Record<string, string> }) {
+        localeNamespaces.push(namespace)
+        localeDictionaries.push({ namespace, ...dictionary })
+        return () => undefined
+      },
       bind: () => (key: string) => key,
       getLocale: () => ({ active: 'zh' }),
       subscribe: () => () => undefined,
@@ -130,7 +137,7 @@ async function mountAgainstFakeHost(): Promise<MountObservation> {
   assert.ok(exports !== undefined, 'client 半区必须自己调用 loader.load')
   ;(exports.apply as (ctx: unknown) => void)(context)
 
-  return { registered, injections, effects, localeNamespaces, styleTags, required, exports }
+  return { registered, injections, effects, localeNamespaces, localeDictionaries, styleTags, required, exports }
 }
 
 /* ────────────────────────── Host 半区 ────────────────────────── */
@@ -159,6 +166,32 @@ test('Client 半区是 __ModuleLoader__ 工厂形态', async () => {
   assert.ok(text.includes('id: "dsh-token-steward"'))
   assert.ok(text.includes('factory: (require) =>'))
   assert.ok(text.trimEnd().endsWith('});'))
+})
+
+test('Client 半区文案：打包的续行不能把 key 切断', async () => {
+  const observation = await mountAgainstFakeHost()
+  const dictionary = observation.localeDictionaries.find((entry) => entry.namespace === 'token-steward')
+  assert.ok(dictionary?.zh, '应当注册 token-steward 的 zh 字典')
+
+  /*
+   * 1.2.0 的产物里，esbuild 的 lineLimit 会在超长字符串中插「\ + 换行」，
+   * 而构建脚本随后给每一行补了缩进——缩进落进了字符串，key 变成
+   * `settin\t\tgs.nav`，整页文案退回原始 key。这里直接查字典本身：
+   * 一个有制表符/换行的 key 永远取不到词。
+   */
+  for (const [namespace, dict] of Object.entries({ zh: dictionary.zh, en: dictionary.en ?? {} })) {
+    for (const key of Object.keys(dict)) {
+      assert.equal(/[\t\r\n]/.test(key), false, namespace + ' 里有被切断的 key: ' + JSON.stringify(key))
+    }
+  }
+  // 曾经最先暴露的那批 key，必须原样在字典里。
+  for (const key of ['settings.nav', 'settings.hide', 'settings.show', 'panel.reload', 'models.latency', 'vendors.sync']) {
+    assert.equal(typeof dictionary.zh[key], 'string', 'zh 缺少 key: ' + key)
+  }
+  // 值也不能因为续行被插入制表符。
+  for (const [key, value] of Object.entries(dictionary.zh)) {
+    assert.equal(value.includes('\t'), false, key + ' 的文案里混进了制表符: ' + JSON.stringify(value))
+  }
 })
 
 test('Client 半区不打包 react，而是 require 宿主注入', async () => {

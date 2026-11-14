@@ -79,6 +79,33 @@ function stylePrelude(css, id) {
   ].join('\n')
 }
 
+/**
+ * 给 client 产物加缩进，但**绝不能**加在续行上。
+ *
+ * esbuild 的 `lineLimit` 会在超长字符串里插入「`\` + 换行」——这是 JS 的
+ * 行续接：换行本身不进字符串。可一旦我们在行首补上 `\t\t`，这两个制表符
+ * 就变成字符串内容了：`"settin\` + 换行 + `\t\tgs.nav"` 求值成
+ * `settin\t\tgs.nav`，`t('settings.nav')` 永远落空，整页文案退回原始 key。
+ * 1.2.0 的发布产物里正是这样坏掉了 157 处。
+ *
+ * @param body - esbuild 的压缩输出。
+ * @returns 每一行（续行保持原样，不补缩进）。
+ */
+function indentBody(body) {
+  const out = []
+  let continuation = false
+  for (const line of body.split('\n')) {
+    if (line === '') {
+      out.push('')
+      continuation = false
+      continue
+    }
+    out.push(continuation ? line : '\t\t' + line)
+    continuation = line.endsWith('\\')
+  }
+  return out
+}
+
 /** 打包 Client 半区，并包成 loader 工厂。 */
 async function buildClient() {
   const result = await build({
@@ -131,7 +158,7 @@ async function buildClient() {
     '\t\tvar module = { exports: {} };',
     '\t\tvar exports = module.exports;',
     stylePrelude(cssText, PKG + '/src/client/steward.module.css'),
-    ...body.split('\n').map((line) => (line === '' ? '' : '\t\t' + line)),
+    ...indentBody(body),
     '\t\treturn module.exports;',
     '\t}',
     '});',

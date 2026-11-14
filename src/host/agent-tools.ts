@@ -213,3 +213,26 @@ export const STEWARD_TOOL_PARAMETERS = {
     description: 'recommend_model 用：default（按当前模式）| subagent（子代理档位）。要决定「派哪个模型做子代理」时用 subagent',
   },
 }
+
+/**
+ * 把上面的 property-map 转成 `tools.register()` 要求的 raw JSON Schema。
+ *
+ * 宿主的 `register()` 不像 `defineTool()` 那样替你转换：`parameters` 会被
+ * 原样当成模型的工具输入契约。直接塞 property-map，模型收到的就不是
+ * `{ type: "object", properties: … }`，Anthropic 侧会直接拒掉这个工具。
+ */
+export function stewardToolParametersJsonSchema(): Record<string, unknown> {
+  const properties: Record<string, unknown> = {}
+  const required: string[] = []
+  for (const [name, spec] of Object.entries(
+    STEWARD_TOOL_PARAMETERS as Record<string, { type: string, required?: boolean, description?: string }>,
+  )) {
+    properties[name] = {
+      type: spec.type,
+      ...(spec.type === 'array' ? { items: { type: 'string' } } : {}),
+      ...(spec.description === undefined ? {} : { description: spec.description }),
+    }
+    if (spec.required === true) required.push(name)
+  }
+  return { type: 'object', properties, required, additionalProperties: false }
+}

@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.2.0 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 582 条
+**版本：** 1.2.3（待发布） | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 587 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
@@ -25,7 +25,7 @@
 
 > **免责声明**：本插件是个人为日常使用而写的调度工具，不是经过同行评审的服务。它在你的机器上真实地花你的钱：免费档之外的每一次调用都会按上游账单计费。作者不对任何第三方模型服务的行为、价格变动、可用性，以及由此产生的费用负责。
 >
-> **密钥**：面板里粘贴的 API Key 以 **AES-256-GCM 密文**（`enc:v1:`）存放在 `$DSH_HOME/token-steward/vendors.json`，文件权限 0600，明文只在发请求的那一刻存在于内存。密钥本身在 `.vault-key`（0600，首次启动自动生成）。它不会进入日志、快照或任何过线 JSON。威胁模型与限制见 [SECURITY.md](SECURITY.md)。
+> **密钥**：面板里粘贴的 API Key 以 **AES-256-GCM 密文**（`enc:v1:`）存放在 `$DSH_HOME/token-steward/vendors.json`，文件权限 0600，明文只在发请求的那一刻存在于内存。密钥本身不再和密文放在一起：默认进系统凭据存储（Windows DPAPI、macOS Keychain、Linux libsecret），拿不到才落到 `%APPDATA%\dsh-token-steward\vault.key`（macOS / Linux 对应配置目录），都在 `$DSH_HOME` 之外。它不会进入日志、快照或任何过线 JSON。威胁模型与限制见 [SECURITY.md](SECURITY.md)。
 >
 > **素材**：厂商头像（`assets/avatars/`）取自 B 站 UP 主 **@zipzippipe** 与 **@大只菠萝熊**（Claude 头像）的立绘作品，仅做 256×256 脸部裁切用于界面展示，版权归原作者所有。`assets/avatars/full/` 保留原图以便追溯。
 
@@ -363,7 +363,7 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 - **首字节之后的失败不重试。** 这是正确性优先的取舍：流式响应已经发出，重发会制造第二份副作用。
 - **缓存只服务可复现的调用。** 带 tools、带随机种子、超长 prompt 都不缓存。
 - **成本是台账与估算的合成。** 上游不返 usage 的调用只能记估算值；面板会标出来。
-- **加密防的是「文件单独流出」，不防同用户恶意软件。** 密钥以 AES-256-GCM 落盘，但钥匙文件（`.vault-key`）也在同一台机器上；已经能以你的身份执行代码的程序两者都能读。详见 [SECURITY.md](SECURITY.md)。
+- **加密防的是「文件单独流出」，不防同用户恶意软件。** 密文与主密钥已经分开存放（密钥进系统凭据存储，或至少在 `$DSH_HOME` 之外的配置目录），把 `~/.dsh` 拷走只拿到密文；但已经能以你的身份执行代码的程序仍能读凭据存储。详见 [SECURITY.md](SECURITY.md)。
 - **跨模型不搬 KV 状态。** 公开协议下只能保住消息日志、清理上一家的私有字段、并用会话粘性少丢前缀缓存；模型内部状态无法迁移。窗口放不下时是拒绝，不是截断。
 - **会话粘性只在本进程内。** DSH 重启后第一次请求会重新选路，之后照常粘住。
 

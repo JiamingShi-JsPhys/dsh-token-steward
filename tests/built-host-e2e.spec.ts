@@ -77,7 +77,13 @@ const POOL_YAML = [
 test('打包后的 Host 半区能挂载、起网关、注册面板路由', async () => {
   const home = await mkdtemp(join(tmpdir(), 'steward-built-'))
   const previousHome = process.env.DSH_HOME
+  const previousVaultDir = process.env.STEWARD_VAULT_DIR
+  const previousVaultKey = process.env.STEWARD_VAULT_KEY
   process.env.DSH_HOME = home
+  // 密钥目录必须留在临时 home 里：否则测试会往真实的 %APPDATA% 写钥匙。
+  process.env.STEWARD_VAULT_DIR = join(home, 'vault-keys')
+  // 用一枚测试密钥，别去碰本机的 DPAPI/Keychain。
+  process.env.STEWARD_VAULT_KEY = Buffer.alloc(32, 5).toString('base64url')
   process.env.STEWARD_TEST_KEY = 'sk-test-000'
 
   const routes: Array<{ path: string, handler: (req: never, res: never) => void }> = []
@@ -90,6 +96,20 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 
     const host = await loadHost()
     assert.equal(typeof host.apply, 'function')
+
+    // 模拟宿主 ToolsService.register() 的硬校验：output.render 必须是函数。
+    // 1.2.0 没有它 → TypeError 被 catch 成一行 warn，工具静默消失。
+    const toolDefinitions: Array<Record<string, unknown>> = []
+    const toolsService = {
+      register(definition: Record<string, unknown>) {
+        const output = definition.output as { render?: unknown } | undefined
+        if (output === undefined || typeof output.render !== 'function') {
+          throw new TypeError('tool "' + String(definition.name) + '" must declare output { schema, render }')
+        }
+        toolDefinitions.push(definition)
+        return () => undefined
+      },
+    }
 
     await (host.apply as (ctx: unknown, config?: unknown) => Promise<void>)({
       logger: () => ({
@@ -107,7 +127,19 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
         teardown = run()
         return () => undefined
       },
+      get: (name: string) => (name === 'tools' ? toolsService : undefined),
     }, {})
+
+    // 工具注册：契约对了才说明 Agent 真的「动得了手」。
+    const tool = toolDefinitions.find((entry) => entry.name === 'token_steward_manage')
+    assert.ok(tool, 'token_steward_manage 必须注册成功（1.2.0 里被 TypeError 静默丢掉）')
+    const parameters = tool.parameters as { type?: string, properties?: Record<string, unknown>, required?: string[] }
+    assert.equal(parameters.type, 'object', 'parameters 必须是 raw JSON Schema，不是 property-map')
+    assert.ok(parameters.properties?.action, 'action 字段必须出现在 properties 里')
+    assert.deepEqual(parameters.required, ['action'])
+    assert.deepEqual((tool.output as { schema: unknown }).schema, { type: 'string' })
+    const render = (tool.output as { render: (args: unknown, value: unknown) => unknown }).render
+    assert.deepEqual(render({}, 'hello'), [{ type: 'text', text: 'hello' }])
 
     // 自诊断：apply 走完必须翻成 ready（以前永远停在 'mounting'）。
     const selfCheck = JSON.parse(await readFile(join(home, 'token-steward', 'state.json'), 'utf8')) as { status: string, pid: number }
@@ -127,7 +159,7 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     assert.ok(state.port > 0)
     // 1.2.0 起 gateway.json 里的令牌是密文，先解开再用。
     const { createSecretVault } = await import('../src/host/secret-vault.ts')
-    const vault = await createSecretVault(join(home, 'token-steward'), { env: {} })
+    const vault = await createSecretVault(join(home, 'token-steward'))
     const token = vault.available() ? vault.open(state.token) : state.token
     assert.ok(typeof token === 'string' && token.length >= 40)
     assert.ok(state.token.startsWith('enc:v1:'), '令牌必须加密落盘')
@@ -248,6 +280,10 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
     await Promise.resolve(teardown?.()).catch(() => {})
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    if (previousVaultDir === undefined) delete process.env.STEWARD_VAULT_DIR
+    else process.env.STEWARD_VAULT_DIR = previousVaultDir
+    if (previousVaultKey === undefined) delete process.env.STEWARD_VAULT_KEY
+    else process.env.STEWARD_VAULT_KEY = previousVaultKey
     delete process.env.STEWARD_TEST_KEY
     await removeTree(home)
   }
@@ -256,7 +292,13 @@ test('打包后的 Host 半区能挂载、起网关、注册面板路由', async
 test('首次安装：没有可用配置也把网关拉起来，面板照常注册', async () => {
   const home = await mkdtemp(join(tmpdir(), 'steward-built-first-run-'))
   const previousHome = process.env.DSH_HOME
+  const previousVaultDir = process.env.STEWARD_VAULT_DIR
+  const previousVaultKey = process.env.STEWARD_VAULT_KEY
   process.env.DSH_HOME = home
+  // 密钥目录必须留在临时 home 里：否则测试会往真实的 %APPDATA% 写钥匙。
+  process.env.STEWARD_VAULT_DIR = join(home, 'vault-keys')
+  // 用一枚测试密钥，别去碰本机的 DPAPI/Keychain。
+  process.env.STEWARD_VAULT_KEY = Buffer.alloc(32, 5).toString('base64url')
 
   let teardown: (() => void | Promise<void>) | undefined
   try {
@@ -285,6 +327,10 @@ test('首次安装：没有可用配置也把网关拉起来，面板照常注�
     await new Promise((resolve) => setTimeout(resolve, 50))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    if (previousVaultDir === undefined) delete process.env.STEWARD_VAULT_DIR
+    else process.env.STEWARD_VAULT_DIR = previousVaultDir
+    if (previousVaultKey === undefined) delete process.env.STEWARD_VAULT_KEY
+    else process.env.STEWARD_VAULT_KEY = previousVaultKey
     await removeTree(home)
   }
 });
@@ -292,7 +338,13 @@ test('首次安装：没有可用配置也把网关拉起来，面板照常注�
 test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai', async () => {
   const home = await mkdtemp(join(tmpdir(), 'steward-built-wire-'))
   const previousHome = process.env.DSH_HOME
+  const previousVaultDir = process.env.STEWARD_VAULT_DIR
+  const previousVaultKey = process.env.STEWARD_VAULT_KEY
   process.env.DSH_HOME = home
+  // 密钥目录必须留在临时 home 里：否则测试会往真实的 %APPDATA% 写钥匙。
+  process.env.STEWARD_VAULT_DIR = join(home, 'vault-keys')
+  // 用一枚测试密钥，别去碰本机的 DPAPI/Keychain。
+  process.env.STEWARD_VAULT_KEY = Buffer.alloc(32, 5).toString('base64url')
 
   const profileDir = join(home, 'profiles', 'desktop')
   const patchFile = join(profileDir, 'cordis.patch.yml')
@@ -349,7 +401,7 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
     // 令牌要进宿主凭据库：只写 process.env 的话，设置页永远显示「未检测到环境变量」。
     // gateway.json 里的令牌是密文（1.2.0 起），比对前先用同一个密钥库解开。
     const { createSecretVault } = await import('../src/host/secret-vault.ts')
-    const vault = await createSecretVault(join(home, 'token-steward'), { env: {} })
+    const vault = await createSecretVault(join(home, 'token-steward'))
     const onDiskToken = vault.available() ? vault.open(state.token) : state.token
     assert.equal(stored.get('STEWARD_LOCAL_TOKEN'), onDiskToken, '令牌应写进 credentials')
   } finally {
@@ -357,6 +409,10 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
     await new Promise((resolve) => setTimeout(resolve, 50))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    if (previousVaultDir === undefined) delete process.env.STEWARD_VAULT_DIR
+    else process.env.STEWARD_VAULT_DIR = previousVaultDir
+    if (previousVaultKey === undefined) delete process.env.STEWARD_VAULT_KEY
+    else process.env.STEWARD_VAULT_KEY = previousVaultKey
     await removeTree(home)
   }
 });
@@ -364,7 +420,13 @@ test('首次安装：启动时把四个档位自动写进 profile 的 llm-pi-ai'
 test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（计量不冻结）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'steward-live-usage-'))
   const previousHome = process.env.DSH_HOME
+  const previousVaultDir = process.env.STEWARD_VAULT_DIR
+  const previousVaultKey = process.env.STEWARD_VAULT_KEY
   process.env.DSH_HOME = home
+  // 密钥目录必须留在临时 home 里：否则测试会往真实的 %APPDATA% 写钥匙。
+  process.env.STEWARD_VAULT_DIR = join(home, 'vault-keys')
+  // 用一枚测试密钥，别去碰本机的 DPAPI/Keychain。
+  process.env.STEWARD_VAULT_KEY = Buffer.alloc(32, 5).toString('base64url')
   process.env.STEWARD_LIVE_KEY = 'sk-live'
 
   const routes: Array<{ path: string, handler: (req: never, res: never) => void }> = []
@@ -435,6 +497,10 @@ test('回归：启动之后写入的 dsh-usage 台账，面板立刻能看到（
     await new Promise((resolve) => setTimeout(resolve, 100))
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
+    if (previousVaultDir === undefined) delete process.env.STEWARD_VAULT_DIR
+    else process.env.STEWARD_VAULT_DIR = previousVaultDir
+    if (previousVaultKey === undefined) delete process.env.STEWARD_VAULT_KEY
+    else process.env.STEWARD_VAULT_KEY = previousVaultKey
     delete process.env.STEWARD_LIVE_KEY
     await removeTree(home)
   }

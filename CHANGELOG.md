@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.2.3 — 2026-11-14（本地改动，暂未发布）
+
+### 主密钥不再和密文躺在同一个目录
+- 1.2.0 把 AES 主密钥写成 `$DSH_HOME/token-steward/.vault-key`，和 `vendors.json`、
+  `gateway.json`、`cache.sqlite` 同一个目录、同一个权限面。任何能以当前用户身份执行的
+  进程（被投毒的依赖、恶意 MCP、误跑的脚本）伸一次手就能把钥匙和锁一起拿走。
+- 现在按平台优先交给系统凭据存储：
+  - **Windows**：DPAPI（`CurrentUser` 作用域），磁盘上只有 `%APPDATA%\dsh-token-steward\vault.key.dpapi`
+    这段**只有当前 Windows 用户能解开**的密文块——拷到别的账户或别的机器上就是随机字节；
+  - **macOS**：Keychain（`security`）；
+  - **Linux**：libsecret（`secret-tool`）。
+- 都用不了时退回用户配置目录里的普通 `vault.key`（`%APPDATA%` / Application Support /
+  `$XDG_CONFIG_HOME` 下的 `dsh-token-steward`），**仍然在 `$DSH_HOME` 之外**：把 `~/.dsh`
+  打包、同步、贴给别人，带走的只有密文。
+- `STEWARD_VAULT_KEY` 仍是最高优先级的覆盖，语义不变（32 字节，base64url / base64 均可）。
+- **迁移**：首次启动会读取状态目录里的旧 `.vault-key`，把同一把钥匙写进新位置，然后
+  **删除旧文件**；旧密文照常解开。写不进新位置时继续用旧钥匙（宁可不迁移，也不把用户的
+  密文变成孤儿）；旧文件内容坏了则退化为不加密并保持文件原样。
+- **回滚提示**：迁移完成后旧版本只认 `.vault-key`，回滚需要用 `STEWARD_VAULT_KEY` 把那把
+  钥匙交还给旧版本。
+- **降级行为不变**：任何一步拿不到密钥都不崩溃、照常运行，只是不加密，并在宿主日志里
+  明确写出实际使用的位置（`keyPath()` 报的就是它）。
+- `enc:v1:` 格式、`SecretVault` 对外形状（`seal` / `open` / `sealBytes` / `openBytes` /
+  `available` / `keyPath`）都没有变化。
+
+### 修掉发布版里的三个真 bug
+1. **Agent 工具注册不符合宿主契约。** `tools.register()` 与 `defineTool()` 的入参形状不同：
+   `parameters` 必须是 raw JSON Schema（`defineTool` 才会替你把 property-map 转过去），
+   `output.render` 必须是函数。1.2.0 直接把 property-map 和缺 `render` 的 `output` 喂给
+   `register()`，宿主抛 `TypeError`，被外层 catch 压成一行 warn——**技能注册成功、工具静默消失**，
+   Agent 看得见说明书、动不了手。现在 `parameters` 由
+   `stewardToolParametersJsonSchema()` 转换，`output.render` 返回一段 text content。
+2. **发布产物里的文案 key 被切断。** `esbuild` 的 `lineLimit` 会在超长字符串中插 `\` + 换行（JS 行续接），构建脚本随后给每一行补 `\t\t` 缩进——缩进落进字符串，`"settin\t\tgs.nav"` 取词永远落空，整页文案退回原始 key（1.2.0 产物里 157 处）。现在续行不补缩进。
+3. **路由台账只记用量、不记路由事件。** `ledger.record()` 定义了却从没被调用，
+   `requests / modes / degraded / chosen / attempts / latencyMs` 永远是 0，README 承诺的
+   「路由维度台账」实际是空表。路由引擎新增 `onRouteEvent` 回调，`report()` 收口时把
+   `RouteEventView`（含降级链与延迟）交给台账；`index.ts` 每次重建 router 都带上它。
+
+### 质量
+- 新增 5 条断言：密钥新位置/迁移/env 覆盖、路由收口回调、打包文案 key 完整性；
+  e2e 增加「按宿主契约注册工具」的校验。共 **587 条全绿**。
+
 ## 1.2.0 — 2026-11-13
 
 这一版没有新功能，全部是安全加固。每一项都对应一个可复现的攻击面，详见

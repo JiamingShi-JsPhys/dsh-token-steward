@@ -89,7 +89,7 @@ function document(apiKey: string): VendorsDocument {
 
 test('vendors.json：密钥以密文写盘，重启后能解回明文', async () => {
   await withDirectory(async (directory) => {
-    const vault = await createSecretVault(directory, { env: {} })
+    const vault = await createSecretVault(directory, { env: {}, keyDirectory: join(directory, 'keys'), keyBackend: 'file' })
     const store = createVendorStore(directory, { vault })
     await store.save(document('sk-live-super-secret-value'))
     const raw = await readFile(join(directory, 'vendors.json'), 'utf8')
@@ -98,7 +98,7 @@ test('vendors.json：密钥以密文写盘，重启后能解回明文', async ()
     if (process.platform !== 'win32') {
       assert.equal((await stat(join(directory, 'vendors.json'))).mode & 0o777, 0o600)
     }
-    const reopened = createVendorStore(directory, { vault: await createSecretVault(directory, { env: {} }) })
+    const reopened = createVendorStore(directory, { vault: await createSecretVault(directory, { env: {}, keyDirectory: join(directory, 'keys'), keyBackend: 'file' }) })
     const loaded = await reopened.load()
     assert.equal(loaded.vendors[0]?.apiKey, 'sk-live-super-secret-value')
   })
@@ -107,7 +107,7 @@ test('vendors.json：密钥以密文写盘，重启后能解回明文', async ()
 test('vendors.json：老版本留下的明文在启动读盘时就升级成密文（不用等保存）', async () => {
   await withDirectory(async (directory) => {
     await writeFile(join(directory, 'vendors.json'), JSON.stringify(document('sk-legacy-plain-key'), null, 2), 'utf8')
-    const vault = await createSecretVault(directory, { env: {} })
+    const vault = await createSecretVault(directory, { env: {}, keyDirectory: join(directory, 'keys'), keyBackend: 'file' })
     const store = createVendorStore(directory, { vault })
     const loaded = await store.load()
     // 内存里照常可用
@@ -126,7 +126,7 @@ test('vendors.json：老版本留下的明文在启动读盘时就升级成密�
 
 test('vendors.json：解不开的密文原样保留，不被一次保存抹掉', async () => {
   await withDirectory(async (directory) => {
-    const writer = createVendorStore(directory, { vault: await createSecretVault(directory, { env: {} }) })
+    const writer = createVendorStore(directory, { vault: await createSecretVault(directory, { env: {}, keyDirectory: join(directory, 'keys'), keyBackend: 'file' }) })
     await writer.save(document('sk-keep-me'))
     const before = JSON.parse(await readFile(join(directory, 'vendors.json'), 'utf8')) as { vendors: Array<{ apiKey: string }> }
     const sealedValue = before.vendors[0]!.apiKey

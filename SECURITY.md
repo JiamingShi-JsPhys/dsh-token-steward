@@ -43,8 +43,21 @@ does not pretend otherwise.
   readable so wiring problems remain debuggable.
 - **Cached response bodies** in `cache.sqlite` are sealed with the same key. The cache key was
   already a SHA-256 fingerprint, never the prompt itself; now the stored content is unreadable too.
-- The key lives in `$DSH_HOME/token-steward/.vault-key` (0600, generated on first use). Set
-  `STEWARD_VAULT_KEY` (base64url, 32 bytes) to keep the key elsewhere or to make a backup portable.
+- The master key **is not stored next to the ciphertext**. It goes to the OS credential store:
+  DPAPI (current-user scope, blob in `%APPDATA%\dsh-token-steward\vault.key.dpapi`) on Windows,
+  Keychain (`security`) on macOS, libsecret (`secret-tool`) on Linux. If none is usable it falls
+  back to a plain `vault.key` in the user config directory (`%APPDATA%\dsh-token-steward` /
+  `~/Library/Application Support/dsh-token-steward` / `$XDG_CONFIG_HOME/dsh-token-steward`) —
+  still outside `$DSH_HOME`. `STEWARD_VAULT_KEY` (base64url or base64, 32 bytes) overrides all of
+  them and keeps its old meaning. `STEWARD_VAULT_DIR` relocates the whole key directory
+  (useful for tests and for users who keep config on another volume).
+- Upgrading from 1.2.0–1.2.2: the legacy `$DSH_HOME/token-steward/.vault-key` is read once, copied
+  to the new location and then **deleted**. Old ciphertexts decrypt unchanged. Rolling back to an
+  older plugin version after the move needs that key restored by hand (`STEWARD_VAULT_KEY`), because
+  the old version only looks at the legacy path.
+- Boundary, stated plainly: this protects files that leave the machine (backups, sync folders,
+  pasted configs). It does **not** protect against malware running as the same user — it can read
+  the credential store too.
 - Files are created with `0600` at `open()` time (not chmod afterwards), so there is no window where
   a world-readable temp file holds a secret. On Windows the mode is advisory; ACL inheritance from
   `%USERPROFILE%` is what protects the directory.
@@ -121,7 +134,10 @@ Every `/api/token-steward/*` route now requires all of:
 
 - `vendors.json` 里的厂家密钥、`gateway.json` 里的本地令牌、`cache.sqlite` 里的缓存正文，
   一律 AES-256-GCM（每个值独立随机 IV），明文只活在内存里；
-- 钥匙在 `$DSH_HOME/token-steward/.vault-key`（0600），也可用 `STEWARD_VAULT_KEY` 放到别处；
+- 主密钥**不再和密文放在同一个目录**：Windows 走 DPAPI（按当前用户绑定，`%APPDATA%\dsh-token-steward\vault.key.dpapi`），
+  macOS 走 Keychain，Linux 走 libsecret；都没有时退回配置目录里的 `vault.key`，仍在 `$DSH_HOME` 之外。
+  1.2.0–1.2.2 留下的 `$DSH_HOME/token-steward/.vault-key` 会在首次启动时搬走并删除，旧密文照常解开；
+  可用 `STEWARD_VAULT_KEY`（32 字节）覆盖，语义不变；`STEWARD_VAULT_DIR` 可整体改密钥目录；
 - 老版本留下的明文文件照常能读，并在**启动读盘时立刻变成密文**（不用等用户点保存）；
   解不开的密文会原样保留，不会被抹掉。
 

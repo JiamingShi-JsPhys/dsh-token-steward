@@ -8,13 +8,17 @@
  *   - 用户把配置文件贴进 issue、聊天或截图；
  *   - 同一账号下的其它程序、Agent 工具直接 `cat` 一遍。
  *
- * 实现：AES-256-GCM，每个值独立随机 IV，密钥 32 字节，落盘在
- * `<数据目录>/.vault-key`（0600，首次使用时生成）。也接受
- * `STEWARD_VAULT_KEY`（base64url）覆盖，便于把密钥放到别处或做可迁移备份。
+ * 实现：AES-256-GCM，每个值独立随机 IV，密钥 32 字节。
  *
- * **威胁模型要说清楚**：密钥和密文在同一台机器、同一个用户下。这层加密防的是
- * 「配置文件单独流出」，**不防**已经能以你的身份执行代码的恶意软件——那种情况下
- * 它同样能读 `.vault-key`。对外文档按这个口径写，不夸大。
+ * 主密钥**不再和密文放在同一个目录**：默认交给操作系统的凭据存储（Windows
+ * DPAPI、macOS Keychain、Linux libsecret），拿不到时才落到用户配置目录下的
+ * `vault.key`——无论如何都在 `$DSH_HOME/token-steward` 之外。旧版本留下的
+ * `<数据目录>/.vault-key` 会在首次启动时被搬走并删除。`STEWARD_VAULT_KEY`
+ * 仍是最高优先级的覆盖（base64url / base64，32 字节）。
+ *
+ * **威胁模型要说清楚**：这层加密防的是「配置文件被整份拷走」（备份、同步盘、
+ * 贴给别人、被其它工具读走），**不防**已经能以你的身份执行代码的恶意软件——
+ * 那种情况下它同样能读凭据存储。对外文档按这个口径写，不夸大。
  *
  * 格式：
  *   文本  `enc:v1:<iv>.<tag>.<ciphertext>`（三段都是 base64url）
@@ -22,8 +26,19 @@
  * 带版本前缀，将来换算法时可以并存。
  */
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { chmod, mkdir, open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  defaultBackends,
+  defaultKeyDirectory,
+  dpapiBackend,
+  fileBackend,
+  keychainBackend,
+  KEY_BYTES,
+  parseKey,
+  removeLegacyKey,
+  secretToolBackend,
+  type KeyBackend,
+} from './vault-key-store.ts'
 
 /** 文本密文前缀。 */
 export const SEALED_PREFIX = 'enc:v1:'
@@ -36,9 +51,6 @@ const IV_BYTES = 12
 
 /** GCM 认证标签长度。 */
 const TAG_BYTES = 16
-
-/** 密钥文件里的密钥长度。 */
-const KEY_BYTES = 32
 
 /** 这个值是不是我们封装的密文。 */
 export function isSealed(value: string): boolean {
@@ -70,10 +82,14 @@ export interface SecretVault {
 export interface VaultOptions {
   /** 读环境变量（测试注入）。 */
   env?: NodeJS.ProcessEnv
-  /** 密钥文件缺失时是否生成；默认 true。测试里关掉可拿到单例行为。 */
+  /** 密钥缺失时是否生成；默认 true。测试里关掉可拿到单例行为。 */
   create?: boolean
-  /** 密钥文件名。 */
+  /** 旧位置（状态目录）里的密钥文件名；只用于迁移，默认 `.vault-key`。 */
   keyFile?: string
+  /** 新位置（状态目录之外）的目录；默认按平台取用户配置目录。 */
+  keyDirectory?: string
+  /** 强制后端；默认 `auto`（按平台挑，凭据存储优先，文件兜底）。 */
+  keyBackend?: 'auto' | 'file' | 'dpapi' | 'keychain' | 'secret-tool'
 }
 
 /** 一个不可用的保险实现：读写都不变身，绝不 panic。 */
@@ -88,81 +104,110 @@ function degradedVault(keyPath: string): SecretVault {
   }
 }
 
-/** 解析 base64 / base64url 的密钥字符串，必须正好 32 字节。 */
-function parseKey(text: string): Buffer | undefined {
-  const trimmed = text.trim()
-  if (trimmed === '') return undefined
-  let buffer: Buffer
-  try {
-    buffer = Buffer.from(trimmed, 'base64url')
-  } catch {
-    return undefined
-  }
-  if (buffer.length !== KEY_BYTES) {
-    try {
-      const fallback = Buffer.from(trimmed, 'base64')
-      if (fallback.length === KEY_BYTES) return fallback
-    } catch {
-      return undefined
-    }
-    return undefined
-  }
-  return buffer
-}
-
 /**
  * 打开（必要时创建）一个数据目录对应的密钥库。
  *
- * 密钥来源优先级：`STEWARD_VAULT_KEY` 环境变量 → `<directory>/.vault-key`。
- * 两者都拿不到就退化：功能照常，但**不加密**，调用方应当记一条警告。
+ * 优先级：`STEWARD_VAULT_KEY` → 凭据存储 / 配置目录里的 `vault.key` →
+ * 迁移状态目录里的旧 `.vault-key` → 新生成一枚。全都拿不到就退化：
+ * 功能照常，但**不加密**，调用方应当记一条警告。
  */
 export async function createSecretVault(directory: string, options: VaultOptions = {}): Promise<SecretVault> {
-  const keyPath = join(directory, options.keyFile ?? '.vault-key')
   const env = options.env ?? process.env
+  const configured = typeof env.STEWARD_VAULT_DIR === 'string' && env.STEWARD_VAULT_DIR.trim() !== ''
+    ? env.STEWARD_VAULT_DIR
+    : undefined
+  const keyDirectory = options.keyDirectory ?? configured ?? defaultKeyDirectory(env)
+  const backends = selectBackends(keyDirectory, options.keyBackend)
+  /** 真正用上的位置（写进 keyPath()，也就是日志与设置页）。 */
+  let used: string = backends[0]?.location() ?? keyDirectory
+
+  // 1. 显式覆盖优先，语义与 1.2.0 完全一致。
   const fromEnv = typeof env.STEWARD_VAULT_KEY === 'string' ? parseKey(env.STEWARD_VAULT_KEY) : undefined
-  const key = fromEnv ?? await loadOrCreateKey(keyPath, options.create !== false)
-  if (key === undefined) return degradedVault(keyPath)
-  return liveVault(key, keyPath)
-}
+  if (fromEnv !== undefined) return liveVault(fromEnv, () => 'env:STEWARD_VAULT_KEY')
 
-/** 读密钥文件；不存在且允许创建时生成一枚。 */
-async function loadOrCreateKey(keyPath: string, create: boolean): Promise<Buffer | undefined> {
-  try {
-    const text = await readFile(keyPath, 'utf8')
-    const parsed = parseKey(text.split(/\r?\n/)[0] ?? '')
-    if (parsed !== undefined) return parsed
-    // 文件在但内容不对：不覆盖（可能被用户改坏了），退化为不加密，由调用方告警。
-    return undefined
-  } catch (error) {
-    if (!isMissing(error) || !create) return undefined
-  }
-  try {
-    await mkdir(join(keyPath, '..'), { recursive: true })
-    const fresh = randomBytes(KEY_BYTES)
-    // 以 0600 原子创建：先写临时文件再 rename，避免半个密钥文件被读到。
-    const temporary = keyPath + '.' + fresh.toString('hex').slice(0, 12) + '.tmp'
-    const handle = await open(temporary, 'w', 0o600)
-    try {
-      await handle.writeFile(fresh.toString('base64url') + '\n', 'utf8')
-      await handle.sync()
-    } finally {
-      await handle.close()
+  // 2. 凭据存储 / 新位置的密钥文件。
+  let sawBrokenBackend = false
+  for (const backend of backends) {
+    const result = await backend.read()
+    if (result.state === 'ok') {
+      used = backend.location()
+      return liveVault(result.key, () => used)
     }
-    const { rename } = await import('node:fs/promises')
-    await rename(temporary, keyPath)
-    await chmod(keyPath, 0o600).catch(() => {})
-    return fresh
-  } catch {
-    return undefined
+    if (result.state === 'invalid') {
+      // 在，但内容不是密钥：绝不覆盖，退化为不加密。
+      return degradedVault(backend.location())
+    }
+    if (result.state === 'unavailable') sawBrokenBackend = true
+  }
+
+  // 3. 老版本把钥匙放在状态目录里：搬走，然后从原地删掉。
+  const legacyPath = join(directory, options.keyFile ?? '.vault-key')
+  const legacy = await readLegacyKey(legacyPath)
+  if (legacy.state === 'ok') {
+    const moved = await writeNewKey(backends, legacy.key)
+    if (moved !== undefined) {
+      used = moved
+      // 同一把钥匙已经在状态目录之外了，旧文件不留（否则加密白做）。
+      if (legacyPath !== moved) await removeLegacyKey(legacyPath)
+      return liveVault(legacy.key, () => used)
+    }
+    // 新位置写不进去：继续用旧钥匙，宁可不迁移也不能把用户的密文变成孤儿。
+    return liveVault(legacy.key, () => legacyPath)
+  }
+  if (legacy.state === 'invalid' || legacy.state === 'unavailable') {
+    return degradedVault(legacyPath)
+  }
+
+  // 4. 全新安装：生成一枚。某个后端「暂时不可用」时不生成，
+  //    免得新钥匙和凭据库里已有的那把对不上、把旧密文变成孤儿。
+  if (sawBrokenBackend || options.create === false) return degradedVault(used)
+  const fresh = randomBytes(KEY_BYTES)
+  const stored = await writeNewKey(backends, fresh)
+  if (stored === undefined) return degradedVault(used)
+  used = stored
+  return liveVault(fresh, () => used)
+}
+
+function selectBackends(directory: string, forced: VaultOptions['keyBackend']): KeyBackend[] {
+  if (forced === undefined || forced === 'auto') return defaultBackends(directory)
+  switch (forced) {
+    case 'file': return [fileBackend(join(directory, 'vault.key'))]
+    case 'dpapi': return [dpapiBackend(directory), fileBackend(join(directory, 'vault.key'))]
+    case 'keychain': return [keychainBackend(), fileBackend(join(directory, 'vault.key'))]
+    case 'secret-tool': return [secretToolBackend(), fileBackend(join(directory, 'vault.key'))]
   }
 }
 
-function isMissing(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT'
+/** 从旧位置读密钥；区分「没有」「有但坏了」「读不了」。 */
+async function readLegacyKey(path: string): Promise<{ state: 'ok', key: Buffer } | { state: 'missing' } | { state: 'invalid' } | { state: 'unavailable' }> {
+  const { readFile } = await import('node:fs/promises')
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT'
+      ? { state: 'missing' }
+      : { state: 'unavailable' }
+  }
+  const key = parseKey(text.split(/\r?\n/)[0] ?? '')
+  return key === undefined ? { state: 'invalid' } : { state: 'ok', key }
+}
+
+/** 把密钥写进第一个写得进去的后端；全失败返回 undefined。 */
+async function writeNewKey(backends: KeyBackend[], key: Buffer): Promise<string | undefined> {
+  for (const backend of backends) {
+    try {
+      await backend.write(key)
+      return backend.location()
+    } catch {
+      // 下一个后端（通常是普通的 vault.key 文件）。
+    }
+  }
+  return undefined
 }
 
 /** 真正干活的实现。 */
-function liveVault(key: Buffer, keyPath: string): SecretVault {
+function liveVault(key: Buffer, keyPath: () => string): SecretVault {
   return {
     seal(plain) {
       if (plain === '') return ''
@@ -217,6 +262,6 @@ function liveVault(key: Buffer, keyPath: string): SecretVault {
       }
     },
     available: () => true,
-    keyPath: () => keyPath,
+    keyPath,
   }
 }

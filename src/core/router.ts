@@ -53,6 +53,14 @@ export interface RouterOptions {
   cooldownMs: number
   failureThreshold: number
   halfOpenAfterMs: number
+  /**
+   * 一次请求收口时回调一次（成功、已提交、或候选耗尽）。
+   *
+   * 1.2.0 的落盘台账只接了 `recordUsage`，`record` 从来没被调用过——
+   * 「谁被选中 / 降级几次 / 每模型延迟」这些字段永远是 0。回调在这里，
+   * 是因为 RouteEventView（含降级链）只有引擎内部知道。
+   */
+  onRouteEvent?: (event: RouteEventView) => void
 }
 
 /** key 的稳定拼写：provider/model。 */
@@ -189,6 +197,7 @@ export function createRouter(
     cooldownMs: options?.cooldownMs ?? config.defaults.cooldown_ms,
     failureThreshold: options?.failureThreshold ?? config.defaults.failure_threshold,
     halfOpenAfterMs: options?.halfOpenAfterMs ?? config.defaults.half_open_after_ms,
+    ...(options?.onRouteEvent === undefined ? {} : { onRouteEvent: options.onRouteEvent }),
   }
   const models = indexModels(config)
   const healths = new Map<string, ModelHealth>()
@@ -472,6 +481,8 @@ export function createRouter(
     recent.push(event)
     if (recent.length > RECENT_EVENT_CAP) recent.splice(0, recent.length - RECENT_EVENT_CAP)
     if (degraded.length > 0) degradedRequests += 1
+    // 落盘台账：内存环形缓冲会随重启清空，这一份才活 180 天。
+    resolved.onRouteEvent?.(event)
 
     attempts.delete(result.requestId)
     startedAt.delete(result.requestId)

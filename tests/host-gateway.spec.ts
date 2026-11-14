@@ -428,7 +428,8 @@ test('回归：usage 记在真实 provider/model 名下，不是幽灵键', asyn
   const dir = await mkdtemp(join(tmpdir(), 'steward-usage-key-'))
   const ledger = createRouteLedgerStore(dir)
   await ledger.load()
-  sharedRouter = createRouter(config())
+  // 和 index.ts 一样：路由收口事件必须交给落盘台账，而不只是 usage。
+  sharedRouter = createRouter(config(), { onRouteEvent: (event) => ledger.record(event) })
 
   const gateway = await startGateway({
     config: () => config(),
@@ -451,6 +452,20 @@ test('回归：usage 记在真实 provider/model 名下，不是幽灵键', asyn
     const stat = ledger.day(localDateKey(Date.now()))?.models['cheap/cheap-1']
     assert.equal(stat?.usage.input, 40)
     assert.equal(stat?.usage.output, 8)
+    /*
+     * 路由维度：谁被选中、尝试了几次、耗了多久（1.2.0 里这些字段永远是 0）。
+     * 这条路径的时钟被固定成 1_000（网关的 now），路由事件按事件时刻归日，
+     * 所以查的是 1_000 对应的那一天；usage 走的是账本自己的真实时钟。
+     */
+    const routeDay = ledger.day(localDateKey(1_000))
+    assert.equal(routeDay?.requests, 1, '一次成功请求必须记进 requests')
+    assert.equal(routeDay?.modes.frugal, 1)
+    assert.equal(routeDay?.degraded, 0)
+    const routeStat = routeDay?.models['cheap/cheap-1']
+    assert.equal(routeStat?.chosen, 1)
+    assert.equal(routeStat?.attempts, 1)
+    assert.equal(routeStat?.failures, 0)
+    assert.equal(routeStat?.latencySamples, 1)
   } finally {
     await gateway.close()
     await rm(dir, { recursive: true, force: true })
@@ -461,7 +476,8 @@ test('回归：流式 usage 也记在真实模型名下', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'steward-usage-stream-'))
   const ledger = createRouteLedgerStore(dir)
   await ledger.load()
-  sharedRouter = createRouter(config())
+  // 和 index.ts 一样：路由收口事件必须交给落盘台账，而不只是 usage。
+  sharedRouter = createRouter(config(), { onRouteEvent: (event) => ledger.record(event) })
 
   const gateway = await startGateway({
     config: () => config(),
