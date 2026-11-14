@@ -6,7 +6,7 @@
 >
 > 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
 
-**版本：** 1.2.3（待发布） | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 587 条
+**版本：** 1.2.3 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 587 条
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
@@ -182,7 +182,7 @@ token 的唯一真相源是 `dsh-usage` 的按日台账；本插件另记一条*
 > **本包尚未发布到 npm**（`pnpm add dsh-token-steward` 会得到 404）。请从
 > GitHub 安装——二选一：
 >
-> - **有 git**：`pnpm add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.2.0`
+> - **有 git**：`pnpm add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.2.3`
 >   （或 `git clone` 后 `pnpm add file:<本地路径>`）
 > - **没有 git**：到 [Releases](https://github.com/JiamingShi-JsPhys/dsh-token-steward/releases)
 >   下载 `dsh-token-steward-<版本>.zip`（内含预构建的 `lib/`，无需编译），

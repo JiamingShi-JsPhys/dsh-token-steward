@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.3 — 2026-11-14（本地改动，暂未发布）
+## 1.2.3 — 2026-11-14
 
 ### 主密钥不再和密文躺在同一个目录
 - 1.2.0 把 AES 主密钥写成 `$DSH_HOME/token-steward/.vault-key`，和 `vendors.json`、
