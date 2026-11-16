@@ -70,6 +70,10 @@ does not pretend otherwise.
 
 Every `/api/token-steward/*` route now requires all of:
 
+- the host's own admission, asked at the top of every handler through
+  `connection.requestRejection` — its Host/Origin fence defeats DNS rebinding and cross-site calls,
+  and its login-token cookie means a caller has to be a signed-in session of this instance. Routes
+  registered on `webServer` do not pass through it on their own, so the plugin asks explicitly;
 - a loopback peer address **and** a loopback `Host` header — DNS rebinding presents the attacker's
   hostname in `Host`, so it fails even though the socket is local;
 - `Origin`, when present, byte-equal to `http(s)://<Host>`;
@@ -141,8 +145,13 @@ Every `/api/token-steward/*` route now requires all of:
 - 老版本留下的明文文件照常能读，并在**启动读盘时立刻变成密文**（不用等用户点保存）；
   解不开的密文会原样保留，不会被抹掉。
 
-面板 API 不再只靠「来自 127.0.0.1」：还要求 `Host` 是回环名（挡 DNS rebinding）、`Origin` 同源、
-跨站请求头出局、写操作必须是 `application/json`（挡 CSRF）。
+面板 API 的每条路由都在 handler 入口先向宿主的 `connection.requestRejection` 要一次裁决：
+Host/Origin 围栏挡 DNS rebinding 与跨站调用，登录令牌 Cookie 要求调用者是本实例的网页会话。
+`webServer` 上挂的路由**不会**自动经过这一步，所以必须显式问。
+
+在此之上插件自己也不再只靠「来自 127.0.0.1」：还要求 `Host` 是回环名、`Origin` 同源、
+跨站请求头出局、写操作必须是 `application/json`（挡 CSRF）。这一道在宿主没有 `connection`
+时仍独立成立。
 
 出站也收紧了：已保存的密钥只发给它自己的上游地址；发现端点不再接受 `?api_key=`；
 跨主机重定向会丢掉 `Authorization`；云元数据地址（169.254.x.x）直接拒绝。

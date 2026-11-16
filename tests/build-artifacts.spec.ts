@@ -147,7 +147,8 @@ test('Host 半区是普通 ESM，导出 name / inject / apply / default', async 
   const url = new URL('file:///' + join(ROOT, 'lib/index.js').replace(/\\/g, '/'))
   const module = await import(url.href) as Record<string, unknown>
   assert.equal(module.name, 'token-steward')
-  assert.deepEqual(module.inject, ['webServer'])
+  // connection 是面板的准入闸门：webServer 的路由不自动经过宿主准入，必须 inject 后显式问。
+  assert.deepEqual(module.inject, ['webServer', 'connection'])
   assert.equal(typeof module.apply, 'function')
   assert.equal(typeof module.default, 'object')
 })

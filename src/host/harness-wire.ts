@@ -235,7 +235,7 @@ export function wireStewardInText(text: string, spec: StewardWireSpec): string |
   // 1. 找 llm-pi-ai 那一行。
   const entryAt = lines.findIndex((line) => isPiAiLine(line))
   if (entryAt === -1) {
-    // 整个 profile 里都没有 llm-pi-ai：在末尾补一条完整的插件声明。
+    // 整个 profile 里都没有 llm-pi-ai：补一条完整的插件声明。
     const block = [
       '- id: llm-pi-ai',
       "  name: '@deepseek-ai/dsh-llm-pi-ai'",
@@ -243,6 +243,31 @@ export function wireStewardInText(text: string, spec: StewardWireSpec): string |
       '    providers:',
       ...renderStewardBlock(spec, 6),
     ]
+    // 全新 profile 的 cordis.patch.yml 正文就是一行 `[]`（或 `plugins: []`）。
+    // 直接往它后面接第二个顶层列表 = 两个 YAML 文档，宿主下次启动解析失败、
+    // 整个 DSH 起不来。所以这种空列表要**替换**，不能追加。
+    let markerAt = -1
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const text = contentOf(lines[i] as string)
+      if (text === '' || text.startsWith('#')) continue
+      if (text === '[]' || /^plugins:\s*\[\]$/.test(text)) markerAt = i
+      break
+    }
+    if (markerAt !== -1) {
+      const marker = lines[markerAt] as string
+      if (contentOf(marker) === '[]') {
+        return [...lines.slice(0, markerAt), ...block, ...lines.slice(markerAt + 1)].join(eol)
+      }
+      // `plugins: []` 形态：保留键，把 `[]` 换成同一缩进下的列表项。
+      const head = marker.replace(/\[\]\s*$/, '').replace(/\s+$/, '')
+      const pad = /^[ 	]*/.exec(marker)?.[0] ?? ''
+      return [
+        ...lines.slice(0, markerAt),
+        head,
+        ...block.map((line) => pad + '  ' + line),
+        ...lines.slice(markerAt + 1),
+      ].join(eol)
+    }
     const body = lines.join(eol).replace(/\s*$/, '')
     return body + eol + eol + block.join(eol) + eol
   }

@@ -3,7 +3,7 @@
  *
  * 一次 apply 只做三件事，且都可被 ctx.effect 干净回收：
  *  1. 把 model_pool.yaml 读成矩阵，建路由引擎，起本地网关；
- *  2. 把面板要的四条 HTTP 路由挂到宿主 webServer 上；
+ *  2. 把面板要的 HTTP 路由挂到宿主 webServer 上；
  *  3. 把网关接线参数写进 $DSH_HOME/token-steward/gateway.json，
  *     并盯着 model_pool.yaml 的改动做热重载。
  *
@@ -13,6 +13,7 @@
  * 一条纪律：**本插件永远不该让宿主起不来**。配置坏了、端口占不到、yaml 解不了，
  * 都只是「本插件不可用」，宿主该照常工作。
  */
+import type { IncomingMessage } from 'node:http'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -52,8 +53,17 @@ export { STEWARD_ENV_NAME } from './host/gateway.ts'
 /** 插件名（cordis 行 id 与日志前缀）。 */
 export const name = 'token-steward'
 
-/** 必需服务：HTTP 载体。llm 不 inject——没有模型的部署也该能挂载插件。 */
-export const inject = ['webServer']
+/**
+ * 必需服务：HTTP 载体，以及 `connection`。
+ *
+ * `connection` 不是可选项：面板路由挂在 `webServer` 上，而 `webServer` 的精确路由
+ * **不**经过 DSH 的 Host/Origin 准入，必须由插件在 handler 入口向 `connection`
+ * 要一次裁决（见 `src/host/routes.ts` 的 `admitRequest`）。少了它，浏览器里任意
+ * 网页都能打到 `/gateway`，把网关令牌读走。
+ *
+ * llm 不 inject——没有模型的部署也该能挂载插件。
+ */
+export const inject = ['webServer', 'connection']
 
 /** 配置形状（schemastery 由宿主注入，这里只声明读到的字段）。 */
 export interface StewardConfigFields {
@@ -276,6 +286,10 @@ async function loadYamlDecoder(): Promise<(text: string) => unknown> {
 export async function apply(ctx: {
   logger?: (name: string) => { info(...args: unknown[]): void, warn(...args: unknown[]): void, error(...args: unknown[]): void }
   webServer?: { register(route: unknown): () => void }
+  /** DSH 的 Connection 服务：面板路由的准入闸门（Host/Origin 围栏 + 登录 Cookie）。 */
+  connection?: {
+    requestRejection(request: { headers: Readonly<Record<string, string | readonly string[] | undefined>> }): 401 | 403 | undefined
+  }
   effect?: (fn: () => () => void, label?: string) => void
   /** 可选服务探测（tools / skills 等按需获取）。 */
   get?<T = unknown>(name: string): T | undefined
@@ -731,6 +745,16 @@ export async function apply(ctx: {
   if (ctx.webServer !== undefined) {
     // 内置头像随包发布（assets/avatars），由同源路由提供，浏览器无需跨域。
     const avatarDirectory = fileURLToPath(new URL('../assets/avatars', import.meta.url))
+    // 准入闸门：webServer 的精确路由不经过 DSH 的连接准入，必须由插件显式接上。
+    // 交给 `connection.requestRejection` 的是这条请求自己的头（Host / Origin /
+    // Sec-Fetch-* / Cookie），由宿主判断 Host/Origin 围栏与登录会话。
+    const connection = ctx.connection
+    const admit = connection === undefined
+      ? undefined
+      : (req: IncomingMessage) => connection.requestRejection({ headers: req.headers })
+    if (admit === undefined) {
+      log.warn('connection is not available; panel routes fall back to the plugin-local loopback check')
+    }
     const routes = makePanelRoutes({
       snapshot: async (seen) => {
         const now = Date.now()
@@ -829,7 +853,7 @@ export async function apply(ctx: {
           port: gateway.port(),
           wired: harnessWired,
         },
-    }, { avatarDirectory })
+    }, { avatarDirectory, ...(admit === undefined ? {} : { admit }) })
     for (const route of routes) {
       try {
         disposers.push(ctx.webServer.register(route))

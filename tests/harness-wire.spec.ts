@@ -92,6 +92,34 @@ test('profile 里根本没有 llm-pi-ai：在末尾补一条', () => {
   assert.ok(text.includes('# 只有别的插件'))
 })
 
+test('空列表的 cordis.patch.yml 要被替换，不能接出第二个文档（宿主会起不来）', () => {
+  // 全新 profile 的用户补丁层正文就是一行 `[]`。往它后面追一个顶层列表，
+  // 得到的是两个 YAML 文档，宿主下次启动直接解析失败——插件把宿主弄挂了。
+  const fresh = '# Your patch layer for this dsh profile:\n# 注释保留\n[]\n'
+  const text = wireStewardInText(fresh, SPEC)!
+  assert.equal(/^\[\]$/m.test(text), false, '空的 [] 必须被替换掉')
+  const doc = parse(text)
+  assert.equal(Array.isArray(doc), true, '整份文件必须仍是**一个**顶层列表')
+  assert.equal(stewardWired(doc, SPEC), true)
+  assert.ok(text.includes('# 注释保留'), '注释不动')
+})
+
+test('`plugins: []` 形态同样替换', () => {
+  const text = wireStewardInText('plugins: []\n', SPEC)!
+  const doc = parse(text) as { plugins: Array<{ name?: string, config?: { providers?: Record<string, unknown> } }> }
+  assert.equal(Array.isArray(doc.plugins), true)
+  assert.equal(stewardWired(doc, SPEC), true, 'stewardContainerOf 认得 plugins.llm-pi-ai.config.providers')
+  assert.equal(text.includes('[]'), false)
+})
+
+test('空列表替换后不会长出第二份 steward（再写一次也不重复）', () => {
+  const once = wireStewardInText('[]\n', SPEC)!
+  const twice = wireStewardInText(once, SPEC)!
+  assert.equal((parse(twice) as unknown[]).length, 1, '仍是一个顶层列表、一条 llm-pi-ai')
+  assert.equal((twice.match(/^\s+steward:$/gm) ?? []).length, 1, 'steward 只有一份')
+  assert.equal(stewardWired(parse(twice), SPEC), true)
+})
+
 test('端口变了要重写地址，用户调过的显示名与上限留着', () => {
   const first = wireStewardInText(PROFILE, SPEC)!
   const tweaked = first

@@ -291,6 +291,75 @@ test('网关未启动时 gateway 端点答 503', async () => {
   })
 })
 
+/* ────────────── 宿主准入：connection.requestRejection ────────────── */
+
+// 面板路由挂在 `webServer` 上，宿主不会替它们做 Host/Origin 准入。少接这一道，
+// 浏览器里任意网页（DNS rebinding 或直接跨站）都能读到 `/gateway` 里的网关令牌。
+// 所以这里的断言是：宿主一否决，请求连 api 层都碰不到。
+
+test('宿主准入否决时请求进不了 api 层，也不交出网关令牌', async () => {
+  let called = 0
+  await withRoutes(api({
+    gateway: () => {
+      called += 1
+      return { baseUrl: 'http://127.0.0.1:1/v1', token: 'tok', modelIds: ['steward:auto'], port: 1 }
+    },
+  }), async (base) => {
+    // 这条请求在本机回环上、Host 也是回环名——插件自己的检查会放行，
+    // 能挡住它的只有宿主准入。
+    const response = await fetch(base + API_PREFIX + '/gateway')
+    assert.equal(response.status, 403)
+    const body = await response.json() as { ok: boolean, error: string, gateway?: unknown }
+    assert.equal(body.ok, false)
+    assert.equal(body.gateway, undefined, '被否决的响应里不能带网关信息')
+    assert.ok(body.error.length > 0)
+  }, { admit: () => 403 })
+  assert.equal(called, 0, '被否决的请求不能走到 api 层')
+})
+
+test('未登录（401）与围栏拒绝（403）按宿主给的状态码回给调用方', async () => {
+  for (const status of [401, 403] as const) {
+    await withRoutes(api(), async (base) => {
+      const response = await fetch(base + API_PREFIX + '/snapshot')
+      assert.equal(response.status, status)
+      const body = await response.json() as { ok: boolean }
+      assert.equal(body.ok, false)
+    }, { admit: () => status })
+  }
+})
+
+test('准入看到的是这条请求自己的头（Host / Origin / Cookie 都在里面）', async () => {
+  const seen: Array<Record<string, unknown>> = []
+  await withRoutes(api(), async (base) => {
+    const response = await fetch(base + API_PREFIX + '/snapshot', {
+      headers: { cookie: 'dsh-auth-aaa=v1' },
+    })
+    assert.equal(response.status, 200)
+  }, {
+    admit: (req) => {
+      seen.push({ ...req.headers })
+      return undefined
+    },
+  })
+  assert.equal(seen.length, 1, '每条请求问一次，也只问一次')
+  assert.equal(typeof seen[0]?.host, 'string', 'Host 是 DNS rebinding 的判据，必须在')
+  assert.equal(seen[0]?.cookie, 'dsh-auth-aaa=v1', '登录 Cookie 是宿主的第二道判据')
+})
+
+test('没有宿主准入（旧宿主 / 单测）时，插件自己的回环检查照旧生效', async () => {
+  await withRoutes(api(), async (base) => {
+    const ok = await fetch(base + API_PREFIX + '/snapshot')
+    assert.equal(ok.status, 200)
+    // text/plain 的「简单请求」仍然被插件自己挡掉。
+    const csrf = await fetch(base + API_PREFIX + '/mode', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: '{"mode":"free"}',
+    })
+    assert.equal(csrf.status, 403)
+  })
+})
+
 test('isLoopbackRequest 认得出本机地址', () => {
   assert.equal(isLoopbackRequest({ socket: { remoteAddress: '127.0.0.1' } } as never), true)
   assert.equal(isLoopbackRequest({ socket: { remoteAddress: '::1' } } as never), true)

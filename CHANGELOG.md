@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.2 — 2026-11-16
+
+### 面板路由接上宿主的连接准入
+
+- **问题**：面板路由是 `ctx.webServer.register` 挂上去的精确路由，而 DSH 的 Host/Origin
+  准入（`connection.requestRejection`：围栏 + 登录令牌 Cookie）只作用于 `connection` 自己那份
+  通道。也就是说，浏览器里任意网页——DNS rebinding 之后的跨站页面、或直接跨站 fetch——能不能
+  打到 `/api/token-steward/gateway`，全看插件自己的检查做得多严。插件检查本身没问题，但它是
+  **唯一**一道，和宿主对其它 API 的判定规则不一致。
+- **现在**：每条 handler 的入口先问一次宿主——
+  `ctx.connection.requestRejection({ headers: req.headers })`，`401`（未登录）/ `403`
+  （Host 或 Origin 不对）原样回给调用方，请求到不了 `api` 层。问的时机在插件自己的回环检查
+  **之前**，两道都在：宿主的围栏挡 rebinding 与跨站，插件自己那道挡非回环地址和非 JSON 写入。
+- `inject` 增加 `connection`。宿主没有这个服务时（旧版本 / 单测）退化为只用插件自己的检查，
+  并写一行 warn——不会因为拿不到准入而让插件或宿主起不来。
+- 覆盖测试在 `tests/host-panel-api.spec.ts`：否决时 `api` 不会被调用、响应里没有网关令牌、
+  401/403 状态码原样透传、准入拿到的是这条请求自己的头（`Host` / `Cookie` 都在）。
+
+### 全新 profile 不再被自动接线写坏
+
+- **问题**：全新 profile 的 `cordis.patch.yml` 正文就是一行 `[]`（模板只带注释和这个空列表）。
+  插件启动后要把网关接进模型菜单，旧逻辑在「没找到 `llm-pi-ai`」时**追加**到文件末尾——
+  `[]` 后面再跟一个顶层列表就是两个 YAML 文档，宿主下次启动直接
+  `failed to parse overlay .../cordis.patch.yml`，**整个 DSH 起不来**。插件把宿主弄挂了，
+  和「本插件永远不该让宿主起不来」这条纪律正好相反，而且踩中的恰好是最常见的场景：刚装好。
+- **现在**：正文是空列表标记（`[]` 或 `plugins: []`）时**替换**它，而不是追加；注释、空行、
+  CRLF 照旧保留。实测（DSH 0.2.1-rc.5，全新 profile）：连续三次启动都正常，四个档位都在菜单里。
+- 覆盖测试在 `tests/harness-wire.spec.ts`：替换后整份文件仍解析成**一个**顶层列表、
+  `steward` 只有一份、`plugins: []` 形态同样处理。
+
 ## 1.2.1 — 2026-11-14
 
 ### 主密钥不再和密文躺在同一个目录

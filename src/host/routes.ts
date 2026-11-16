@@ -163,10 +163,18 @@ export interface PanelApi {
   deleteVendor?(vendorId: string): Promise<{ ok: boolean, error?: string }>
 }
 
-/** 面板路由的可选资源目录。 */
+/** 面板路由的可选资源目录与准入闸门。 */
 export interface PanelRouteOptions {
   /** 内置头像目录（assets/avatars）；缺省时 avatar 端点返回 404。 */
   avatarDirectory?: string
+  /**
+   * 宿主准入：DSH `connection.requestRejection` 的 Host/Origin 围栏 + 登录 Cookie。
+   *
+   * `webServer.register` 挂的精确路由**不**自动经过它（只有 `connection` 自己那份
+   * 通道会过），所以必须在 handler 入口显式问一次。返回 `401`（未登录）/ `403`
+   * （Host 或 Origin 不对）时这条请求到此为止；`undefined` 表示放行。
+   */
+  admit?: (req: IncomingMessage) => 401 | 403 | undefined
 }
 
 /** 内置头像 id 的合法字符（防止路径穿越）。 */
@@ -174,9 +182,34 @@ const AVATAR_ID = /^[a-z0-9._-]+$/
 
 /** 建全部面板路由。 */
 export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}): StewardRoute[] {
-  const guard = (res: ServerResponse): boolean => {
-    // 只服务回环：这些端点会暴露本地令牌与全部模型清单。
+  /**
+   * 面板的唯一门厅：两道闸门，缺一不可。
+   *
+   *  1. **宿主准入**（`options.admit` → `connection.requestRejection`）：Host/Origin
+   *     围栏挡 DNS rebinding 与跨站调用，登录 Cookie 要求调用者是这个 DSH 的网页会话。
+   *     这些端点走的是 `webServer.register`，宿主不会替我们做这一步。
+   *  2. **插件自己的回环检查**（`panelRequestRejection`）：比宿主更严，且在没有
+   *     `connection` 的宿主上仍然独立成立——`/gateway` 会交出网关令牌，这一道不能省。
+   *
+   * @returns 是否可以继续处理这条请求；不能时响应已经写完。
+   */
+  const admitRequest = (req: IncomingMessage, res: ServerResponse): boolean => {
     if (res.writableEnded) return false
+    const hostStatus = options.admit?.(req)
+    if (hostStatus !== undefined) {
+      writeJson(res, hostStatus, {
+        ok: false,
+        error: hostStatus === 401
+          ? 'unauthorized: sign in to this DSH instance to use the panel'
+          : 'forbidden: host or origin rejected by the host admission fence',
+      })
+      return false
+    }
+    const rejection = panelRequestRejection(req)
+    if (rejection !== undefined) {
+      writeJson(res, 403, { ok: false, error: rejection })
+      return false
+    }
     return true
   }
 
@@ -185,12 +218,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/snapshot',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         const cookieHeader = req.headers.cookie
         const seen = cookieHeader === undefined ? undefined : { authCookies: countAuthCookies(cookieHeader) }
         writeJson(res, 200, { ok: true, snapshot: await api.snapshot(seen) })
@@ -200,12 +228,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/mode',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'POST') {
           writeJson(res, 405, { ok: false, error: 'use POST' })
           return
@@ -235,12 +258,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/reload',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'POST') {
           writeJson(res, 405, { ok: false, error: 'use POST' })
           return
@@ -253,12 +271,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/discover',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'POST') {
           writeJson(res, 405, { ok: false, error: 'use POST' })
           return
@@ -303,12 +316,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/delete-vendor',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'POST') {
           writeJson(res, 405, { ok: false, error: 'use POST' })
           return
@@ -345,12 +353,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/sync-harness',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'POST') {
           writeJson(res, 405, { ok: false, error: 'use POST' })
           return
@@ -387,12 +390,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/import-harness',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'POST') {
           writeJson(res, 405, { ok: false, error: 'use POST' })
           return
@@ -427,12 +425,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/vendors',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method === 'GET') {
           if (api.getVendors === undefined) {
             writeJson(res, 503, { ok: false, error: 'vendor store is not available' })
@@ -474,12 +467,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/avatar',
       handler: async (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         if (req.method !== 'GET') {
           writeJson(res, 405, { ok: false, error: 'use GET' })
           return
@@ -507,12 +495,7 @@ export function makePanelRoutes(api: PanelApi, options: PanelRouteOptions = {}):
       kind: 'exact',
       path: API_PREFIX + '/gateway',
       handler: (req, res) => {
-        if (!guard(res)) return
-        const rejection = panelRequestRejection(req)
-        if (rejection !== undefined) {
-          writeJson(res, 403, { ok: false, error: rejection })
-          return
-        }
+        if (!admitRequest(req, res)) return
         const info = api.gateway()
         if (info === undefined) {
           writeJson(res, 503, { ok: false, error: 'gateway is not running' })
