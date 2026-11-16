@@ -18,6 +18,8 @@
     "assets",
     "model_pool.example.yaml",
     "README.md",
+    "README_en.md",
+    "README.i18n.yaml",
     "docs",
     "LICENSE",
     "CHANGELOG.md",

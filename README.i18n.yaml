@@ -1,8 +1,7 @@
 # README.i18n.yaml — 配对一致性记录
 files:
-  - README.md
-  - README.zh.md
-updated-with: 2026-11-06 (1.0.0: +本地精确缓存 / Exact-match cache 节)
-sections: 12
-table-rows: 26
-notes: 两个文件章节一一对应（Why a gateway / Three modes / Failure handling / Metering / Install / Virtual model ids / UI / Security / Configuration / Package layout / Development），表格行数一致（26）。
+  - README.md      # 简体中文（主文件）
+  - README_en.md   # English
+updated-with: 2026-11-16 (1.2.2: 中文为主文件，英文拆到 README_en.md)
+sections: 20
+notes: 两份文件的二级章节一一对应、顺序一致（目录 / Why / Install / Quick start / Architecture / Four modes / Subagents / Context / Failure handling / Cache / Metering / Virtual ids / Upstream protocols / Configuration / Layout / Security boundary / Tests / Limitations / Notice / Issues / License）——共 20 个正文章节 + 1 个目录。代码块、表格与命令两边一致；改其中一份时同步改另一份。

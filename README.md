@@ -1,12 +1,14 @@
 # DSH Token Steward（管家）
 
-> **给 DeepSeek Harness 用的模型矩阵调度中枢：把任意 OpenAI 兼容上游接进同一张矩阵，按任务属性自动选路，失败自动换人，用量与成本一眼可见。**
->
-> 官方 API、免费镜像、自建中转、贵但全能的顶配模型，都可以挂在同一张池子里。插件在 `127.0.0.1` 起一个 OpenAI 兼容网关，把 `llm-pi-ai` 的 `baseURL` 指过去就行——DSH 的会话、子代理、工具调用一行都不用改。选路、降级、健康熔断、精确缓存与计量全部发生在网关里。
->
-> 矩阵、厂家密钥、每个型号的价目和擅长标签，都在 DSH 设置页的「管家设置」里维护；也可以直接让 Agent 用对话改——插件注册了 `token_steward_manage` 工具和同名技能。
+**给 DeepSeek Harness 用的模型矩阵调度中枢：把任意 OpenAI 兼容上游接进同一张矩阵，按任务属性自动选路，失败自动换人，用量与成本一眼可见。**
 
-**版本：** 1.2.2 | **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 | **测试：** 594 条
+官方 API、免费镜像、自建中转、贵但全能的顶配模型，都可以挂在同一张池子里。插件在 `127.0.0.1` 起一个 OpenAI 兼容网关，把 `llm-pi-ai` 的 `baseURL` 指过去就行——DSH 的会话、子代理、工具调用一行都不用改。选路、降级、健康熔断、精确缓存与计量全部发生在网关里；矩阵、厂家密钥、每个型号的价目和擅长标签在 DSH 设置页的「管家设置」里维护，也可以直接让 Agent 用对话改。
+
+**简体中文** · [English](README_en.md)
+
+**版本：** 1.2.2 ｜ **适用：** DeepSeek Harness ≥ 0.2.1-rc.3 ｜ **测试：** 594 条 ｜ **许可：** MIT
+
+> 面板里粘贴的 API Key 以密文落盘，主密钥放在系统凭据存储里，都不进日志、快照或任何过线 JSON。面板路由先过宿主准入再执行。威胁模型与限制见[安全边界](#安全边界)与 [SECURITY.md](SECURITY.md)。
 
 <p align="center">
   <img src="docs/images/app.png" width="820" alt="装进 DSH 之后：右下角是管家悬浮球，显示当前档位与今日已省">
@@ -21,13 +23,36 @@
 
 ---
 
-## 安全与开源声明
+## 目录
 
-> **免责声明**：本插件是个人为日常使用而写的调度工具，不是经过同行评审的服务。它在你的机器上真实地花你的钱：免费档之外的每一次调用都会按上游账单计费。作者不对任何第三方模型服务的行为、价格变动、可用性，以及由此产生的费用负责。
->
-> **密钥**：面板里粘贴的 API Key 以 **AES-256-GCM 密文**（`enc:v1:`）存放在 `$DSH_HOME/token-steward/vendors.json`，文件权限 0600，明文只在发请求的那一刻存在于内存。密钥本身不再和密文放在一起：默认进系统凭据存储（Windows DPAPI、macOS Keychain、Linux libsecret），拿不到才落到 `%APPDATA%\dsh-token-steward\vault.key`（macOS / Linux 对应配置目录），都在 `$DSH_HOME` 之外。它不会进入日志、快照或任何过线 JSON。威胁模型与限制见 [SECURITY.md](SECURITY.md)。
->
-> **素材**：厂商头像（`assets/avatars/`）取自 B 站 UP 主 **@zipzippipe** 与 **@大只菠萝熊**（Claude 头像）的立绘作品，仅做 256×256 脸部裁切用于界面展示，版权归原作者所有。`assets/avatars/full/` 保留原图以便追溯。
+**先看这些**
+
+- [为什么需要 Token 管家？](#为什么需要-token-管家)
+- [安装](#安装)
+- [快速上手](#快速上手)
+
+**往下看**
+
+- [架构与流水线](#架构与流水线)
+- [四种调度模式](#四种调度模式)
+- [子代理：把哪个模型派出去](#子代理把哪个模型派出去)
+- [换模型时，上下文怎么办](#换模型时上下文怎么办)
+- [容灾](#容灾)
+- [SQLite 本地精确缓存](#sqlite-本地精确缓存)
+- [计量](#计量)
+- [虚拟模型 id](#虚拟模型-id)
+- [上游协议](#上游协议openai-兼容-与-anthropic-messages)
+- [配置](#配置)
+- [仓库布局](#仓库布局)
+
+**其它**
+
+- [安全边界](#安全边界)
+- [测试](#测试)
+- [已知局限](#已知局限)
+- [安全与开源声明](#安全与开源声明)
+- [报告问题与反馈](#报告问题与反馈)
+- [开源许可与致谢](#开源许可与致谢)
 
 ---
 
@@ -42,6 +67,101 @@ Token 管家换了一条路：既然插件改不了请求体，那就在 HTTP �
 - **按任务选路**：写代码、长文推理、看图、并发轰炸——不同请求落到不同型号，而不是全局钉死一个。
 - **自动容灾**：429 冷却、5xx 熔断、401 直接下线、上下文超限换大窗口，都在一次客户端请求内完成，会话不中断。
 - **真实的账**：每一次调用的 token 与费用都记在路由维度上，缓存命中和降配选路省下的钱单独记账。
+
+---
+
+## 安装
+
+> **本包尚未发布到 npm**（`pnpm add dsh-token-steward` 会得到 404）。请从
+> GitHub 安装——二选一：
+>
+> - **有 git**：`pnpm add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.2.2`
+>   （或 `git clone` 后 `pnpm add file:<本地路径>`）
+> - **没有 git**：到 [Releases](https://github.com/JiamingShi-JsPhys/dsh-token-steward/releases)
+>   下载 `dsh-token-steward-<版本>.zip`（内含预构建的 `lib/`，无需编译），
+>   解压后 `pnpm add file:<解压路径>`
+
+### 1. 让 profile 依赖本包
+
+在你要装到的那个 profile 里安装本包（开头两条命令任选其一；`dsh plugin` 会把参数转给 pnpm，装进 `~/.dsh/profiles/<name>/`）：
+
+```bash
+dsh plugin --profile desktop add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.2.2
+```
+
+没有 git 的机器改成 `dsh plugin --profile desktop add file:<解压路径>`。
+
+### 2. 把插件插进插件名册
+
+在 `~/.dsh/profiles/desktop/cordis.patch.yml` 追加（完整样例见包内 `cordis.patch.yml`）：
+
+```yaml
+- insert:
+    - id: token-steward
+      name: dsh-token-steward
+      config:
+        enabled: true
+```
+
+### 3. 重启 DSH —— 接线是自动的
+
+**这一步不用手写配置。** DSH 起来、网关就绪之后，插件会自己检查 profile 里
+`@deepseek-ai/dsh-llm-pi-ai` 的 `providers`，缺 `steward` 这一家就补上：
+
+```yaml
+      steward:
+        displayName: 管家
+        api: openai-completions
+        baseURL: http://127.0.0.1:51741/v1
+        apiKeyEnv: STEWARD_LOCAL_TOKEN
+        defaultMaxTokens: 65536
+        models:
+          - { id: 'steward:frugal',    name: '管家·极致便宜' }
+          - { id: 'steward:balanced',  name: '管家·效率优先' }
+          - { id: 'steward:max_power', name: '管家·最强火力' }
+          - { id: 'steward:free',      name: '管家·免费档' }
+```
+
+写回是**文本拼接**：只插/换 `steward` 那一段，你自己的注释、空行、缩进风格、
+别的厂家一个字都不会动；已经接好就一个字节都不写。认不出结构（比如
+`providers: {...}` 的 flow 写法）它什么都不做，只记一条日志——不会把你的
+profile 重排坏。
+
+写进去之后**再重启一次 DSH**，输入框里就能选到四个档位。
+「管家设置 → 个人网关」里有一行会告诉你接上没有。
+
+> 不想让它动你的 profile？在插件配置里写 `autoWire: false`，然后照上面的
+> YAML 自己接一次，效果完全一样。
+
+输入框里只有这四个档位。子代理专用模型（`steward:subagent`）仍然可用，只是不再出现在模型选择器里——它给 `dsh-tool-subagent` 用，不是给人选的模式（自己接的话，把那条 `agentOptions` 的 `provider` 写成 `steward`、`model` 写成 `steward:subagent` 即可）。
+
+### 四个踩过的坑，务必照抄
+
+- **`defaultMaxTokens: 65536`**。`llm-pi-ai` 的默认值是 128000，会原样写进请求的 `max_tokens`。Agnes 这类上游硬上限是 65536，直接回 400 `max_tokens 不能超过 65536`，会话当场失败。网关侧还会再按窗口压一次，但 profile 里的初值先写对能省掉一整类报错。
+- **`STEWARD_LOCAL_TOKEN` 必须和网关一致。** 插件的 `apiKeyEnv` 指向进程环境里的本地令牌，而 DSH 的凭据层读的是**启动时的环境快照**——插件在进程里改 `process.env` 它看不见。1.1.1 起插件启动时会把这枚令牌经宿主的 `credentials.set` 写进凭据库，设置页因此显示「留空使用已保存凭据」而不是「未检测到环境变量」。系统用户环境变量里如果还留着旧令牌（换过 `gateway.json`、装过旧版本），每个请求都会被网关 401，界面显示「API 密钥无效 AUTH」。1.1.0 起有三道保障：① 网关**优先采用继承来的合法令牌**，主动对齐到 DSH 手里那把钥匙；② 启动时若发现持久化令牌与继承值不一致，**漂移窗口内两把都接住**（下次启动自然收敛成一把）；③ 早期版本还会把当前令牌写回用户环境变量（Windows）；1.2.0 起这一步改为默认关闭（`syncTokenEnv`），因为那会让之后启动的每个进程都继承令牌。①② 已足够避免漂移。面板「管家设置 → 刷新」里能看到当前实际生效的令牌。
+- **`apiKeyEnv: STEWARD_LOCAL_TOKEN`，不要写 `apiKey`**。`llm-pi-ai` 的 provider schema **没有 `apiKey` 字段**——写了会被静默忽略——凭据只通过 `apiKeyEnv` 从 `~/.dsh/.credentials.yaml` 的 `refs:` 解析。插件在网关启动时自己把本地令牌写进 `process.env.STEWARD_LOCAL_TOKEN`，所以两边名字必须一致，否则报 `No API key for provider: steward`。
+- **DSH 打不开、提示「应用无法启动 / desktop welcome: Web authentication failed」时，先清网页会话 Cookie。** 这与插件、密钥、账号都无关：桌面版宿主每次启动都会下发一枚**新名字**的 `dsh-auth-<随机>` Cookie，却从不回收上一次的；攒到 70 枚左右，Cookie 头越过 Node 默认的 16 KB 上限，宿主对所有带凭证的请求回 **431**，桌面端拿不到 2xx 就判定认证失败。1.1.0 起面板会盯着这个数（≥ 40 挂黄条、≥ 55 挂红条），**完全退出 DSH**（含托盘）后运行 `npm run repair:cookies` 清干净再打开即可——脚本会先备份 Cookies 库，只删本机 `127.0.0.1` 的 `dsh-auth-*`。
+
+端口默认 51741，可用 `gatewayPort` 配置改成 `0`（系统分配）或固定值；实际地址与令牌随时可以在「管家设置」里一键复制。
+
+---
+
+## 快速上手
+
+**打开面板。** 右下角悬浮球环的颜色是当前模式，角标是**今日已省**（缓存命中 + 降配选路）。点开是四页签：成本看板、模型矩阵、路由日志、代理协作。
+
+**接一家厂商（管家设置 → 厂家设置）。** 内置 21 家厂商目录（Anthropic、OpenAI、Google、DeepSeek、豆包、千帆、硅基流动、OpenRouter、opencode、Agnes、Moonshot、通义、智谱、MiniMax、xAI、Mistral、腾讯、阶跃……），每家都有官方地址与官网入口；也可以加自定义厂家，填自己的中转站地址。
+
+- **拉取模型**：向 `/v1/models` 探一次真实清单，勾选要用的型号。
+- **从系统导入这一家**：只把 DSH profile 里**地址对得上的那一家**搬进来（按规范化 URL 或厂商 id 匹配），不会一按就把所有厂商全拉进来。
+- **同步到系统模型**：反向写回 DSH 的 provider 配置，保留注释与 `apiKeyEnv`，并补上 `defaultMaxTokens: 65536`。
+- **删除**：显式删掉一家，保存永远不会顺手删东西。
+
+**让免费可用。** 在「免费池」里挑一家（百度千帆 / 硅基流动 / OpenRouter）拉取并勾选，或者在任意厂家把型号价目填 0。启用的零成本卡片会挂「免费·免费可用」徽标，切到「管家·免费档」立刻只剩它们。
+
+**让自建端点也能看图。** 中转站和自建端点（比如 Westlake 上的 `deepseek-flash`、`glm-flash`、`Qwen`）目录里没有它们的档案，管家默认按纯文本处理，带图的请求会被硬过滤掉。每张模型卡右侧有个**「能看图」**勾选框——勾上就等于声明 `vision`：能力标签进路由、输入模态补上 `image`、卡片挂「多模态」徽标。中文标签也认（`多模态` / `看图` / `视觉`），与 `vision` 等价；`编程`、`推理`、`快速`、`工具调用` 等同理。
+
+**让 Agent 帮你改。** 直接说「把 xxx 接进来，只开三个模型，切到免费档」，Agent 会调用 `token_steward_manage`（`show_status / recommend_model / add_or_update_vendor / set_enabled_models / tag_model / remove_vendor / set_mode`），改动走与面板完全相同的原子保存路径，立即热重载。派子代理前想先问「谁合适」，就让它调 `recommend_model`，拿到带理由的排序再决定。
 
 ---
 
@@ -177,93 +297,6 @@ token 的唯一真相源是 `dsh-usage` 的按日台账；本插件另记一条*
 
 ---
 
-## 安装
-
-> **本包尚未发布到 npm**（`pnpm add dsh-token-steward` 会得到 404）。请从
-> GitHub 安装——二选一：
->
-> - **有 git**：`pnpm add https://github.com/JiamingShi-JsPhys/dsh-token-steward.git#v1.2.2`
->   （或 `git clone` 后 `pnpm add file:<本地路径>`）
-> - **没有 git**：到 [Releases](https://github.com/JiamingShi-JsPhys/dsh-token-steward/releases)
->   下载 `dsh-token-steward-<版本>.zip`（内含预构建的 `lib/`，无需编译），
->   解压后 `pnpm add file:<解压路径>`
-
-### 1. 让 profile 依赖本包
-
-### 2. 把插件插进插件名册
-
-在 `~/.dsh/profiles/desktop/cordis.patch.yml` 追加（完整样例见包内 `cordis.patch.yml`）：
-
-```yaml
-- insert:
-    - id: token-steward
-      name: dsh-token-steward
-      config:
-        enabled: true
-```
-
-### 3. 重启 DSH —— 接线是自动的
-
-**这一步不用手写配置。** DSH 起来、网关就绪之后，插件会自己检查 profile 里
-`@deepseek-ai/dsh-llm-pi-ai` 的 `providers`，缺 `steward` 这一家就补上：
-
-```yaml
-      steward:
-        displayName: 管家
-        api: openai-completions
-        baseURL: http://127.0.0.1:51741/v1
-        apiKeyEnv: STEWARD_LOCAL_TOKEN
-        defaultMaxTokens: 65536
-        models:
-          - { id: 'steward:frugal',    name: '管家·极致便宜' }
-          - { id: 'steward:balanced',  name: '管家·效率优先' }
-          - { id: 'steward:max_power', name: '管家·最强火力' }
-          - { id: 'steward:free',      name: '管家·免费档' }
-```
-
-写回是**文本拼接**：只插/换 `steward` 那一段，你自己的注释、空行、缩进风格、
-别的厂家一个字都不会动；已经接好就一个字节都不写。认不出结构（比如
-`providers: {...}` 的 flow 写法）它什么都不做，只记一条日志——不会把你的
-profile 重排坏。
-
-写进去之后**再重启一次 DSH**，输入框里就能选到四个档位。
-「管家设置 → 个人网关」里有一行会告诉你接上没有。
-
-> 不想让它动你的 profile？在插件配置里写 `autoWire: false`，然后照上面的
-> YAML 自己接一次，效果完全一样。
-
-输入框里只有这四个档位。子代理专用模型（`steward:subagent`）仍然可用，只是不再出现在模型选择器里——它给 `dsh-tool-subagent` 用，不是给人选的模式（自己接的话，把那条 `agentOptions` 的 `provider` 写成 `steward`、`model` 写成 `steward:subagent` 即可）。
-
-### 四个踩过的坑，务必照抄
-
-- **`defaultMaxTokens: 65536`**。`llm-pi-ai` 的默认值是 128000，会原样写进请求的 `max_tokens`。Agnes 这类上游硬上限是 65536，直接回 400 `max_tokens 不能超过 65536`，会话当场失败。网关侧还会再按窗口压一次，但 profile 里的初值先写对能省掉一整类报错。
-- **`STEWARD_LOCAL_TOKEN` 必须和网关一致。** 插件的 `apiKeyEnv` 指向进程环境里的本地令牌，而 DSH 的凭据层读的是**启动时的环境快照**——插件在进程里改 `process.env` 它看不见。1.1.1 起插件启动时会把这枚令牌经宿主的 `credentials.set` 写进凭据库，设置页因此显示「留空使用已保存凭据」而不是「未检测到环境变量」。系统用户环境变量里如果还留着旧令牌（换过 `gateway.json`、装过旧版本），每个请求都会被网关 401，界面显示「API 密钥无效 AUTH」。1.1.0 起有三道保障：① 网关**优先采用继承来的合法令牌**，主动对齐到 DSH 手里那把钥匙；② 启动时若发现持久化令牌与继承值不一致，**漂移窗口内两把都接住**（下次启动自然收敛成一把）；③ 早期版本还会把当前令牌写回用户环境变量（Windows）；1.2.0 起这一步改为默认关闭（`syncTokenEnv`），因为那会让之后启动的每个进程都继承令牌。①② 已足够避免漂移。面板「管家设置 → 刷新」里能看到当前实际生效的令牌。
-- **`apiKeyEnv: STEWARD_LOCAL_TOKEN`，不要写 `apiKey`**。`llm-pi-ai` 的 provider schema **没有 `apiKey` 字段**——写了会被静默忽略——凭据只通过 `apiKeyEnv` 从 `~/.dsh/.credentials.yaml` 的 `refs:` 解析。插件在网关启动时自己把本地令牌写进 `process.env.STEWARD_LOCAL_TOKEN`，所以两边名字必须一致，否则报 `No API key for provider: steward`。
-- **DSH 打不开、提示「应用无法启动 / desktop welcome: Web authentication failed」时，先清网页会话 Cookie。** 这与插件、密钥、账号都无关：桌面版宿主每次启动都会下发一枚**新名字**的 `dsh-auth-<随机>` Cookie，却从不回收上一次的；攒到 70 枚左右，Cookie 头越过 Node 默认的 16 KB 上限，宿主对所有带凭证的请求回 **431**，桌面端拿不到 2xx 就判定认证失败。1.1.0 起面板会盯着这个数（≥ 40 挂黄条、≥ 55 挂红条），**完全退出 DSH**（含托盘）后运行 `npm run repair:cookies` 清干净再打开即可——脚本会先备份 Cookies 库，只删本机 `127.0.0.1` 的 `dsh-auth-*`。
-
-端口默认 51741，可用 `gatewayPort` 配置改成 `0`（系统分配）或固定值；实际地址与令牌随时可以在「管家设置」里一键复制。
-
----
-
-## 快速上手
-
-**打开面板。** 右下角悬浮球环的颜色是当前模式，角标是**今日已省**（缓存命中 + 降配选路）。点开是四页签：成本看板、模型矩阵、路由日志、代理协作。
-
-**接一家厂商（管家设置 → 厂家设置）。** 内置 21 家厂商目录（Anthropic、OpenAI、Google、DeepSeek、豆包、千帆、硅基流动、OpenRouter、opencode、Agnes、Moonshot、通义、智谱、MiniMax、xAI、Mistral、腾讯、阶跃……），每家都有官方地址与官网入口；也可以加自定义厂家，填自己的中转站地址。
-
-- **拉取模型**：向 `/v1/models` 探一次真实清单，勾选要用的型号。
-- **从系统导入这一家**：只把 DSH profile 里**地址对得上的那一家**搬进来（按规范化 URL 或厂商 id 匹配），不会一按就把所有厂商全拉进来。
-- **同步到系统模型**：反向写回 DSH 的 provider 配置，保留注释与 `apiKeyEnv`，并补上 `defaultMaxTokens: 65536`。
-- **删除**：显式删掉一家，保存永远不会顺手删东西。
-
-**让免费可用。** 在「免费池」里挑一家（百度千帆 / 硅基流动 / OpenRouter）拉取并勾选，或者在任意厂家把型号价目填 0。启用的零成本卡片会挂「免费·免费可用」徽标，切到「管家·免费档」立刻只剩它们。
-
-**让自建端点也能看图。** 中转站和自建端点（比如 Westlake 上的 `deepseek-flash`、`glm-flash`、`Qwen`）目录里没有它们的档案，管家默认按纯文本处理，带图的请求会被硬过滤掉。每张模型卡右侧有个**「能看图」**勾选框——勾上就等于声明 `vision`：能力标签进路由、输入模态补上 `image`、卡片挂「多模态」徽标。中文标签也认（`多模态` / `看图` / `视觉`），与 `vision` 等价；`编程`、`推理`、`快速`、`工具调用` 等同理。
-
-**让 Agent 帮你改。** 直接说「把 xxx 接进来，只开三个模型，切到免费档」，Agent 会调用 `token_steward_manage`（`show_status / recommend_model / add_or_update_vendor / set_enabled_models / tag_model / remove_vendor / set_mode`），改动走与面板完全相同的原子保存路径，立即热重载。派子代理前想先问「谁合适」，就让它调 `recommend_model`，拿到带理由的排序再决定。
-
----
-
 ## 虚拟模型 id
 
 | id | 含义 |
@@ -275,33 +308,6 @@ profile 重排坏。
 | `steward:alias/<name>` | `routing.aliases` 里定义的自定义意图 |
 
 也可以直接写矩阵里某个真实模型 id，网关会直通到它。输入框的模型菜单里有四个中文档位：管家·极致便宜 / 管家·效率优先 / 管家·最强火力 / 管家·免费档——面板顶部的「当前为哪一档」跟着它走。
-
----
-
-## 安全边界
-
-- 网关**只绑 127.0.0.1**，端口由系统分配；
-- 每次启动生成随机本地令牌，客户端必须带 `Authorization: Bearer <token>`；
-- 令牌在 `gateway.json` 里以**密文**保存（0600），与模型配置同目录；
-- 矩阵侧的凭据支持 `env:` / `file:` / `literal:` 引用，展开后的明文**只在内存**，不进日志、不进快照、不进任何过线 JSON；
-- **所有面板 API 拒绝非回环请求**，并且校验 `Host` / `Origin` / `Sec-Fetch-Site`、写操作强制 `application/json`——这些端点会暴露本地令牌与全部模型清单，只靠「来自 127.0.0.1」挡不住 DNS rebinding 与 CSRF；
-- 出站只发往你配置的上游；已保存的密钥只发给它自己的上游地址，重定向不会带着钥匙跨主机，云元数据地址（169.254.x.x）一律拒绝；
-- 中国区防封：Anthropic 的 API Key 输入框正上方有固定红字警告。
-
----
-
-## 配置
-
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `enabled` | `true` | 关闭则完全不挂载：网关不起、面板不出现、路由不注册 |
-| `poolPath` | `$DSH_HOME/token-steward/model_pool.yaml` | 矩阵配置路径（无 `vendors.json` 时的回退来源） |
-| `gatewayPort` | `51741` | 网关端口，`0` = 系统分配（固定值才能写进 profile，见安装一节） |
-| `autoWire` | `true` | 启动时把网关自动写进 DSH 的模型菜单；`false` 则完全不动 profile |
-| `encryptAtRest` | `true` | 密钥/令牌/缓存正文用 AES-256-GCM 加密落盘；`false` 则退回明文（不推荐） |
-| `syncTokenEnv` | `false` | 把网关令牌写回 Windows 用户环境变量。默认关：开启后之后启动的每个进程都继承它 |
-| `retainDays` | `180` | 路由台账保留天数 |
-| `usagePollMs` | `15000` | 读 dsh-usage 台账的间隔（最小 2000） |
 
 ---
 
@@ -327,6 +333,21 @@ profile 重排坏。
 
 ---
 
+## 配置
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 关闭则完全不挂载：网关不起、面板不出现、路由不注册 |
+| `poolPath` | `$DSH_HOME/token-steward/model_pool.yaml` | 矩阵配置路径（无 `vendors.json` 时的回退来源） |
+| `gatewayPort` | `51741` | 网关端口，`0` = 系统分配（固定值才能写进 profile，见安装一节） |
+| `autoWire` | `true` | 启动时把网关自动写进 DSH 的模型菜单；`false` 则完全不动 profile |
+| `encryptAtRest` | `true` | 密钥/令牌/缓存正文用 AES-256-GCM 加密落盘；`false` 则退回明文（不推荐） |
+| `syncTokenEnv` | `false` | 把网关令牌写回 Windows 用户环境变量。默认关：开启后之后启动的每个进程都继承它 |
+| `retainDays` | `180` | 路由台账保留天数 |
+| `usagePollMs` | `15000` | 读 dsh-usage 台账的间隔（最小 2000） |
+
+---
+
 ## 仓库布局
 
 ```
@@ -344,12 +365,24 @@ model_pool.example.yaml  矩阵配置样例
 
 ---
 
+## 安全边界
+
+- 网关**只绑 127.0.0.1**，端口由系统分配；
+- 每次启动生成随机本地令牌，客户端必须带 `Authorization: Bearer <token>`；
+- 令牌在 `gateway.json` 里以**密文**保存（0600），与模型配置同目录；
+- 矩阵侧的凭据支持 `env:` / `file:` / `literal:` 引用，展开后的明文**只在内存**，不进日志、不进快照、不进任何过线 JSON；
+- **面板 API 先过宿主的连接准入**（`connection.requestRejection`：Host/Origin 围栏 + 登录令牌 Cookie，未登录回 401、围栏拒绝回 403），再过插件自己的检查：拒绝非回环请求、`Host` 必须是回环名、`Origin` 同源、`Sec-Fetch-Site` 不许跨站、写操作强制 `application/json`——这些端点会暴露本地令牌与全部模型清单，只靠「来自 127.0.0.1」挡不住 DNS rebinding 与 CSRF；
+- 出站只发往你配置的上游；已保存的密钥只发给它自己的上游地址，重定向不会带着钥匙跨主机，云元数据地址（169.254.x.x）一律拒绝；
+- 中国区防封：Anthropic 的 API Key 输入框正上方有固定红字警告。
+
+---
+
 ## 测试
 
 ```bash
 npm install
 npm run build      # 产出 lib/index.js 与 lib/client.js
-npm test           # 先构建，再跑全部 582 条断言
+npm test           # 先构建，再跑全部 594 条断言
 npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUncheckedIndexedAccess）
 ```
 
@@ -369,17 +402,39 @@ npm run typecheck  # tsc --noEmit（strict + exactOptionalPropertyTypes + noUnch
 
 ---
 
+## 安全与开源声明
+
+**免责声明**：本插件是个人为日常使用而写的调度工具，不是经过同行评审的服务。它在你的机器上真实地花你的钱：免费档之外的每一次调用都会按上游账单计费。作者不对任何第三方模型服务的行为、价格变动、可用性，以及由此产生的费用负责。
+
+**密钥**：面板里粘贴的 API Key 以 **AES-256-GCM 密文**（`enc:v1:`）存放在 `$DSH_HOME/token-steward/vendors.json`，文件权限 0600，明文只在发请求的那一刻存在于内存。密钥本身不和密文放在一起：默认进系统凭据存储（Windows DPAPI、macOS Keychain、Linux libsecret），拿不到才落到 `%APPDATA%\dsh-token-steward\vault.key`（macOS / Linux 对应配置目录），都在 `$DSH_HOME` 之外。它不会进入日志、快照或任何过线 JSON。威胁模型与限制见 [SECURITY.md](SECURITY.md)。
+
+**素材**：厂商头像（`assets/avatars/`）取自 B 站 UP 主 **@zipzippipe** 与 **@大只菠萝熊**（Claude 头像）的立绘作品，仅做 256×256 脸部裁切用于界面展示，版权归原作者所有。`assets/avatars/full/` 保留原图以便追溯。
+
+---
+
 ## 报告问题与反馈
 
 仓库：<https://github.com/JiamingShi-JsPhys/dsh-token-steward>
 
-提 issue 时请附上：DSH 版本、`gateway.json` 里的端口（**不要贴令牌**）、复现用的虚拟模型 id，以及面板「路由日志」里对应的那条记录。
+**普通 bug 与功能请求**：走仓库的 [Issues](https://github.com/JiamingShi-JsPhys/dsh-token-steward/issues)。请附上 DSH 版本、`gateway.json` 里的端口（**不要贴令牌**）、复现用的虚拟模型 id，以及面板「路由日志」里对应的那条记录。
+
+**安全漏洞（仅此一类）**：不要用公开 issue，邮件发到 `jiamingshi_git@outlook.com`。
+
+- **主题**：必须带 `report_dsh-token-steward:` 前缀加一句话摘要，例如
+  `report_dsh-token-steward: 面板路由可被跨站页面读取网关令牌`。
+- **正文**：写清复现步骤与环境（操作系统、DSH 版本、插件版本）。
 
 ---
 
 ## 开源许可与致谢
 
-MIT，见 `LICENSE`。版本历史见 `CHANGELOG.md`，架构与决策记录见 `docs/architecture.md`。
+MIT，见 [LICENSE](LICENSE)。版本历史见 [CHANGELOG.md](CHANGELOG.md)，架构与决策记录见 [docs/architecture.md](docs/architecture.md)。
+
+**作者与维护者**：Jiaming Shi
+
+**DeepSec** —— 本仓库用它做代码安全扫描。
+
+**Claude**（Anthropic）—— 部分代码、测试、文档与发布说明由作者与其共同完成；每处改动都经审阅，仅在能通过相应测试或验证时才保留。
 
 - 厂商头像立绘：B 站 UP 主 **@zipzippipe**；Claude 头像：B 站 UP 主 **@大只菠萝熊**。版权归原作者所有。
 - 面板与调度器的形态参考了 DSH 社区插件（`dsh-usage`、`dsh-provider-proxy`）的公开实现与文档。
